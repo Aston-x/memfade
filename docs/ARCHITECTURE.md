@@ -109,4 +109,18 @@ WHERE (scope_key = ? OR cross_scope = 1)
    全库 → 衰减重算 → gist 压缩 → 合并重复 → 矛盾仲裁
 ```
 
+## 注入时机：为什么不是「收到消息就注入」
+
+宿主把「注入上下文」这件事放在**模型请求之前**，而不是「消息到达时」。
+原因有二：
+
+1. 消息到达时，会话可能还没建立，注入会失败；
+2. 只有在请求构造阶段才能**直接改写真正发给模型的 Context Items**——
+   写进聊天历史的话，会被上下文的裁剪逻辑顺手丢掉。
+
+以 MaiBot 为例，钩子选在 `maisaka.planner.before_request`
+（规划器）与 `maisaka.replyer.before_model_request`（回复器）：
+两次模型请求各注入各的，互不干扰，而且都有现成的 `session_id` 可当作用域键。
+
+
 

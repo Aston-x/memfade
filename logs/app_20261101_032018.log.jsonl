@@ -1,0 +1,13 @@
+{"logger_name": "config", "event": "MaiCore 当前版本: 1.3.9", "level": "info", "lineno": 282, "module": "src.config.config", "timestamp": "11-01 03:20:19"}
+{"logger_name": "config", "event": "正在品鉴配置文件...", "level": "info", "lineno": 283, "module": "src.config.config", "timestamp": "11-01 03:20:19"}
+{"logger_name": "database_migration", "event": "数据库 schema 已是目标版本，无需迁移。当前版本=43", "level": "info", "lineno": 79, "module": "src.common.database.migrations.bootstrap", "timestamp": "11-01 03:20:19"}
+{"logger_name": "database", "event": "数据库迁移准备完成， 当前版本=43，目标版本=43", "level": "info", "lineno": 150, "module": "src.common.database.database", "timestamp": "11-01 03:20:19"}
+{"logger_name": "database", "event": "数据库模型建表检查完成，耗时=0ms", "level": "debug", "lineno": 156, "module": "src.common.database.database", "timestamp": "11-01 03:20:19"}
+{"logger_name": "database", "event": "数据库运行期性能索引已检查：ix_jargons_status_count_id，耗时=0ms", "level": "debug", "lineno": 114, "module": "src.common.database.database", "timestamp": "11-01 03:20:19"}
+{"logger_name": "database", "event": "数据库运行期性能索引已检查：ix_jargons_global_count_id，耗时=0ms", "level": "debug", "lineno": 114, "module": "src.common.database.database", "timestamp": "11-01 03:20:19"}
+{"logger_name": "database", "event": "数据库运行期性能索引已检查：ix_jargons_complete_count_id，耗时=0ms", "level": "debug", "lineno": 114, "module": "src.common.database.database", "timestamp": "11-01 03:20:19"}
+{"logger_name": "database", "event": "数据库运行期性能索引已检查：ix_mai_messages_session_id_timestamp，耗时=0ms", "level": "debug", "lineno": 114, "module": "src.common.database.database", "timestamp": "11-01 03:20:19"}
+{"logger_name": "database", "event": "数据库运行期性能索引检查完成，耗时=1ms", "level": "info", "lineno": 126, "module": "src.common.database.database", "timestamp": "11-01 03:20:19"}
+{"logger_name": "database", "event": "数据库 schema 版本收尾完成，耗时=0ms", "level": "debug", "lineno": 160, "module": "src.common.database.database", "timestamp": "11-01 03:20:19"}
+{"logger_name": "config", "event": "非常的新鲜，非常的美味！", "level": "info", "lineno": 295, "module": "src.config.config", "timestamp": "11-01 03:20:19"}
+{"logger_name": "emoji", "event": "启动表情包管理器", "level": "info", "lineno": 284, "module": "src.emoji_system.emoji_manager", "timestamp": "11-01 03:20:19"}

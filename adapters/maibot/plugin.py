@@ -22,6 +22,8 @@ import asyncio
 import os
 import sys
 import time
+import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
 from maibot_sdk import API, Command, Field, HookHandler, MaiBotPlugin, PluginConfigBase, Tool
@@ -209,9 +211,6 @@ class MemFadePlugin(MaiBotPlugin):
         self._counter: Dict[str, int] = {}
         self._last_maintain: float = 0.0
         self._maintain_task: Optional[asyncio.Task] = None
-        self._last_injected: Dict[str, tuple] = {}
-        self._reinject_interval: float = 300.0
-        """记忆块内容没变时的重放间隔（秒）。"""
         self._last_search: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------ #
@@ -359,33 +358,77 @@ class MemFadePlugin(MaiBotPlugin):
         if not parsed:
             return None
         text = parsed.get("text") or ""
-        session_id = parsed.get("session_id") or ""
         scope = self._scope_of(parsed)
 
-        # 1) 召回并注入
-        if self.config.memory.inject_enabled and text and session_id:
-            await self._inject_context(text, scope, session_id)
-
-        # 2) 收集对话，达到节奏就抽取
+        # 1) 收集对话，达到节奏就抽取
         if self.config.memory.extract_enabled and text:
             await self._maybe_extract(parsed, scope)
 
-        # 3) 顺路做一次整理（按间隔节流）
+        # 2) 顺路做一次整理（按间隔节流）
         await self._maybe_maintain(scope)
         return None
 
-    async def _inject_context(self, text: str, scope: Scope, session_id: str) -> None:
-        """把相关记忆写进 Maisaka 上下文。"""
+    @HookHandler(
+        "maisaka.planner.before_request",
+        name="memfade_inject_planner",
+        description="把记忆注入规划请求的上下文",
+        mode=HookMode.BLOCKING,
+        order=HookOrder.NORMAL,
+        error_policy=ErrorPolicy.SKIP,
+    )
+    async def handle_planner_before_request(
+        self, items: Any = None, session_id: str = "", **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """规划器发起模型请求前注入记忆。"""
+
+        del kwargs
+        return await self._inject_into_items(items, session_id)
+
+    @HookHandler(
+        "maisaka.replyer.before_model_request",
+        name="memfade_inject_replyer",
+        description="把记忆注入回复器实际发送的上下文",
+        mode=HookMode.BLOCKING,
+        order=HookOrder.NORMAL,
+        error_policy=ErrorPolicy.SKIP,
+    )
+    async def handle_replyer_before_model_request(
+        self, items: Any = None, session_id: str = "", **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        """回复器发起模型请求前注入记忆。"""
+
+        del kwargs
+        return await self._inject_into_items(items, session_id)
+
+    async def _inject_into_items(self, items: Any, session_id: str) -> Optional[Dict[str, Any]]:
+        """把召回的记忆写进 Context Items。
+
+        为什么用 ``maisaka.*.before_request`` 而不是 ``chat.receive.after_process``：
+
+        * ``after_process`` 跑在**会话创建之前**（宿主顺序是
+          after_process hook → register_message → get_or_create_session），
+          那时 ``maisaka.context.append`` 会因为找不到聊天流而抛异常；
+        * 这里跑在会话创建之后、模型请求之前，``session_id`` 直接就在载荷里，
+          正好是记忆的作用域键；
+        * 而且能**直接改写真正发给模型的 Context Items**，
+          不会像「往历史里追加」那样被上下文裁剪顺手丢掉。
+        """
 
         engine = self._engine
-        if engine is None:
-            return
+        if engine is None or not self.config.plugin.enabled:
+            return None
+        if not self.config.memory.inject_enabled:
+            return None
+        if not isinstance(items, list) or not items:
+            return None
+        query = self._last_user_text(items)
+        scope = Scope(platform="qq", chat_type="session", chat_id=str(session_id or "unknown"))
         try:
             vector = None
             if self.config.memory.use_host_embedding:
-                vector = await engine.embed_query(text)
+                vector = await engine.embed_query(query)
             context = engine.build_context(
-                text,
+                query,
                 scope,
                 query_vector=vector,
                 header=self.config.memory.inject_header or "记忆",
@@ -395,32 +438,75 @@ class MemFadePlugin(MaiBotPlugin):
                 max_items=max(0, int(self.config.memory.profile_items)),
                 max_chars=max(0, int(self.config.memory.profile_chars)),
             )
-            if not context.text and not profile:
-                return
-            # 内容没变就不重复注入：记忆块每轮都塞一遍会污染上下文，
-            # 也会让模型觉得「用户一直在重复同样的话」。
-            # 但隔一段时间要重放一次，防止它被宿主的上下文裁剪挤掉。
-            now = time.time()
-            last_at, last_text = self._last_injected.get(session_id, (0.0, ""))
-            if context.text == last_text and now - last_at < self._reinject_interval:
-                return
-            self._last_injected[session_id] = (now, context.text)
             body = self._wrap_context(context.text, profile)
-            await self.ctx.maisaka.context.append(
-                stream_id=session_id,
-                segments=[{"type": "text", "content": body}],
-                visible_text=f"记忆 {len(context.facts) + len(context.echoes)} 条",
-                source_kind=SOURCE_KIND,
-            )
-            if self.config.plugin.verbose:
-                self.ctx.logger.info(
-                    "[memfade] 注入 %d 条记忆（事实 %d / 回声 %d）",
-                    len(context.hits),
-                    len(context.facts),
-                    len(context.echoes),
-                )
+            if not body:
+                return None
+            new_items = list(items)
+            new_items.insert(self._insert_index(items), self._build_memory_item(items, body))
+            if context.hits:
+                engine.reinforce([hit.memory.id for hit in context.hits])
+            return {"success": True, "action": "continue", "modified_kwargs": {"items": new_items}}
         except Exception as exc:
             self.ctx.logger.warning("[memfade] 注入记忆失败: %s", exc)
+            return None
+
+    @staticmethod
+    def _last_user_text(items: list) -> str:
+        """从 Context Items 里取最后一条用户消息的纯文本。"""
+
+        for item in reversed(items):
+            if not isinstance(item, dict) or item.get("item_type") != "UserMessageItem":
+                continue
+            parts = item.get("parts")
+            if not isinstance(parts, list):
+                continue
+            chunks = []
+            for part in parts:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text = part.get("text")
+                    if isinstance(text, str) and text.strip():
+                        chunks.append(text.strip())
+            if chunks:
+                return "\n".join(chunks)
+        return ""
+
+    @staticmethod
+    def _insert_index(items: list) -> int:
+        """记忆块插在最后一条用户消息之前——它是背景，不是用户刚说的话。"""
+
+        for index in range(len(items) - 1, -1, -1):
+            item = items[index]
+            if isinstance(item, dict) and item.get("item_type") == "UserMessageItem":
+                return index
+        return len(items)
+
+    @staticmethod
+    def _build_memory_item(items: list, body: str) -> Dict[str, Any]:
+        """构造一条合法的 UserMessageItem 快照。
+
+        格式由宿主的 ``serialize_context_item_snapshot`` 定义：
+        ``item_type`` / ``meta``（item_id、logical_turn_id、timestamp）/ ``parts``。
+        ``logical_turn_id`` 沿用最后一条用户消息的，
+        这样它属于当前这一轮，不会破坏工具调用锚点校验。
+        """
+
+        logical_turn_id = None
+        for item in reversed(items):
+            if not isinstance(item, dict) or item.get("item_type") != "UserMessageItem":
+                continue
+            meta = item.get("meta")
+            if isinstance(meta, dict):
+                logical_turn_id = meta.get("logical_turn_id")
+            break
+        return {
+            "item_type": "UserMessageItem",
+            "meta": {
+                "item_id": f"memfade-{uuid.uuid4().hex[:16]}",
+                "logical_turn_id": logical_turn_id,
+                "timestamp": datetime.now().isoformat(),
+            },
+            "parts": [{"type": "text", "text": body}],
+        }
 
     @staticmethod
     def _wrap_context(text: str, profile: str = "") -> str:

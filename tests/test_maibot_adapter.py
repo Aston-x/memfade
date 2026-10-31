@@ -46,6 +46,45 @@ class TestWebUIDeclaration(unittest.TestCase):
         self.assertEqual(len(extension.pages), 2)
 
 
+@unittest.skipUnless(HAS_HOST, "未找到 MaiBot 宿主")
+class TestHostItemCompatibility(unittest.IsolatedAsyncioTestCase):
+    """记忆块必须能通过宿主自己的反序列化器。
+
+    格式不对时宿主只会打一条 warning 然后**静默丢弃**这次注入——
+    插件看起来一切正常，但记忆其实从来没进过 prompt。
+    """
+
+    async def test_memory_item_survives_host_deserializer(self):
+        import sys
+
+        if str(MAIBOT_ROOT) not in sys.path:
+            sys.path.insert(0, str(MAIBOT_ROOT))
+        from src.llm_models.payload_content.context_item import CONTEXT_ITEM_SCHEMA_VERSION
+        from src.llm_models.payload_content.context_protocol import ContextProtocolMode
+        from src.plugin_runtime.hook_payloads import deserialize_prompt_items
+
+        from adapters.maibot.plugin import MemFadePlugin
+
+        items = make_items("今天吃什么呢")
+        body = "[系统·长期记忆] 许杏玖喜欢吃辣的东西"
+        memory_item = MemFadePlugin._build_memory_item(items, body)
+        merged = [memory_item] + items
+        restored = deserialize_prompt_items(
+            merged,
+            item_schema_version=CONTEXT_ITEM_SCHEMA_VERSION,
+            mode=ContextProtocolMode.REQUEST_CONTEXT,
+            original_items=(),
+        )
+        self.assertEqual(len(restored), len(merged))
+        texts = []
+        for item in restored:
+            for part in getattr(item, "parts", ()):
+                text = getattr(part, "text", None)
+                if isinstance(text, str):
+                    texts.append(text)
+        self.assertIn(body, texts, "记忆块没能被宿主还原")
+
+
 
 class FakeLogger:
     def info(self, *args, **kwargs):
@@ -128,6 +167,31 @@ def make_message(text: str, *, group_id: str = "", user_id: str = "1738157278", 
     }
 
 
+def make_items(text: str, *, session_id: str = "sess-1") -> list:
+    """构造一份序列化后的 Context Items（形态与宿主发给 hook 的一致）。"""
+
+    return [
+        {
+            "item_type": "UserMessageItem",
+            "meta": {
+                "item_id": "real-user-1",
+                "logical_turn_id": "turn-1",
+                "timestamp": "2026-11-01T00:00:00",
+            },
+            "parts": [{"type": "text", "text": text}],
+        },
+        {
+            "item_type": "AssistantMessageItem",
+            "meta": {
+                "item_id": "assistant-1",
+                "logical_turn_id": "turn-1",
+                "timestamp": "2026-11-01T00:00:01",
+            },
+            "parts": [{"type": "text", "text": "好的"}],
+        },
+    ]
+
+
 @unittest.skipUnless(HAS_SDK, "未安装 maibot_sdk")
 class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -173,17 +237,52 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         engine.remember(
             MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
-        await plugin.handle_after_process(message=make_message("今天吃什么呢"))
-        appended = plugin._ctx.maisaka.context.appended
-        self.assertTrue(appended, "应当有记忆被注入")
-        body = appended[0]["segments"][0]["content"]
+        result = await plugin.handle_planner_before_request(items=make_items("今天吃什么呢"), session_id="sess-1")
+        self.assertIsNotNone(result, "应当返回改写后的 items")
+        new_items = result["modified_kwargs"]["items"]
+        body = "\n".join(
+            part["text"]
+            for item in new_items
+            for part in item.get("parts", [])
+            if part.get("type") == "text"
+        )
         self.assertIn("许杏玖喜欢吃辣的东西", body)
-        self.assertEqual(appended[0]["stream_id"], "sess-1")
-        self.assertEqual(appended[0]["source_kind"], "plugin:memfade")
+        self.assertEqual(len(new_items), 3, "应当多出一条记忆块")
+
+    async def test_memory_item_inserted_before_last_user_message(self):
+        plugin = self.plugin
+        from memfade import MemoryDraft, MemoryKind, Scope
+
+        scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
+        plugin._engine.remember(
+            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+        )
+        items = make_items("今天吃什么呢")
+        result = await plugin.handle_replyer_before_model_request(items=items, session_id="sess-1")
+        new_items = result["modified_kwargs"]["items"]
+        self.assertEqual(new_items[0]["item_type"], "UserMessageItem")
+        self.assertIn("长期记忆", new_items[0]["parts"][0]["text"], "记忆块应当排在真实用户消息之前")
+        self.assertEqual(new_items[1]["parts"][0]["text"], "今天吃什么呢")
+
+    async def test_memory_item_meta_is_valid(self):
+        plugin = self.plugin
+        from memfade import MemoryDraft, MemoryKind, Scope
+
+        scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
+        plugin._engine.remember(
+            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+        )
+        items = make_items("今天吃什么呢")
+        result = await plugin.handle_planner_before_request(items=items, session_id="sess-1")
+        item = result["modified_kwargs"]["items"][0]
+        meta = item["meta"]
+        self.assertTrue(meta["item_id"])
+        self.assertEqual(meta["logical_turn_id"], "turn-1", "应沿用当前轮的 logical_turn_id")
+        self.assertTrue(meta["timestamp"])
 
     async def test_no_injection_without_memories(self):
-        await self.plugin.handle_after_process(message=make_message("今天吃什么呢"))
-        self.assertFalse(self.plugin._ctx.maisaka.context.appended, "没有记忆时不应注入空块")
+        result = await self.plugin.handle_planner_before_request(items=make_items("在吗"), session_id="sess-1")
+        self.assertIsNone(result, "没有记忆时不应改写 items")
 
     async def test_profile_is_always_injected(self):
         """「关于对方」的稳定事实不该等被问到才想起。"""
@@ -195,10 +294,9 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         plugin._engine.remember(
             MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
-        await plugin.handle_after_process(message=make_message("在吗"))
-        appended = plugin._ctx.maisaka.context.appended
-        self.assertTrue(appended, "画像应当常驻注入")
-        body = appended[0]["segments"][0]["content"]
+        result = await plugin.handle_planner_before_request(items=make_items("在吗"), session_id="sess-1")
+        self.assertIsNotNone(result, "画像应当常驻注入")
+        body = result["modified_kwargs"]["items"][0]["parts"][0]["text"]
         self.assertIn("关于对方", body)
         self.assertIn("许杏玖喜欢辣的食物", body)
 
