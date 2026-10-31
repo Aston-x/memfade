@@ -93,6 +93,25 @@ _KIND_ALIASES = {
     "skill": MemoryKind.SKILL,
 }
 
+# 各档显著性的合法区间。
+# 提示词里已经约束过一遍，但**提示词不是保证**——模型偶尔会给一次性事件打 0.9，
+# 那会让「上周吃了炸鸡」比「他叫许杏玖」活得久、权重还更高。
+# 所以在代码里再夹一次。
+IMPORTANCE_BOUNDS = {
+    MemoryKind.EPISODIC: (0.15, 0.55),
+    MemoryKind.SEMANTIC: (0.40, 0.95),
+    MemoryKind.PREFERENCE: (0.40, 0.90),
+    MemoryKind.RELATION: (0.40, 0.95),
+    MemoryKind.SKILL: (0.40, 0.90),
+}
+
+
+def _clamp_importance(kind: MemoryKind, value: float) -> float:
+    """按种类夹紧显著性。"""
+
+    low, high = IMPORTANCE_BOUNDS.get(kind, (0.0, 1.0))
+    return min(high, max(low, float(value)))
+
 
 class MemoryExtractor:
     """把对话变成候选记忆。"""
@@ -200,7 +219,7 @@ class MemoryExtractor:
             if self._looks_sensitive(content):
                 continue
             kind = _KIND_ALIASES.get(str(item.get("kind") or "").lower(), MemoryKind.EPISODIC)
-            importance = _clamp_float(item.get("importance"), 0.5)
+            importance = _clamp_importance(kind, _clamp_float(item.get("importance"), 0.5))
             cross = bool(item.get("cross_scope")) and self.config.promote_cross_scope
             drafts.append(
                 MemoryDraft(

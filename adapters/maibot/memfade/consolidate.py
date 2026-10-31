@@ -91,7 +91,8 @@ class ConsolidationService:
             report.merged = self._merge_pass(scope_key, report)
         if self.config.maintenance.enable_supersede:
             report.superseded = self._supersede_pass(scope_key)
-        report.purged = self._purge_pass(ts)
+        report.purged += self._trim_pass(scope_key)
+        report.purged += self._purge_pass(ts)
         return report
 
     def _load(self, scope_key: Optional[str], limit: int) -> list[Memory]:
@@ -205,4 +206,43 @@ class ConsolidationService:
             if self.store.delete(mem.id):
                 purged += 1
         return purged
+
+    def _trim_pass(self, scope_key: Optional[str]) -> int:
+        """超出上限时淘汰最弱的记忆。
+
+        淘汰顺序：已归档 → 残影 → 淡出中 → 活跃。
+        置顶的、以及被反复提起过的，不动。
+        """
+
+        cap = int(self.config.maintenance.max_memories_per_scope)
+        if cap <= 0 or not scope_key:
+            return 0
+        memories = self.store.iter_scope(scope_key, limit=cap * 4 + 1000)
+        if len(memories) <= cap:
+            return 0
+        status_rank = {
+            MemoryStatus.ARCHIVED.value: 0,
+            MemoryStatus.GISTED.value: 1,
+            MemoryStatus.FADING.value: 2,
+            MemoryStatus.ACTIVE.value: 3,
+            MemoryStatus.SUPERSEDED.value: 0,
+        }
+        removable = [m for m in memories if not m.pinned]
+        removable.sort(
+            key=lambda m: (
+                status_rank.get(m.status.value, 3),
+                m.strength,
+                m.importance,
+                m.recall_count,
+                m.updated_at,
+            )
+        )
+        excess = len(memories) - cap
+        removed = 0
+        for mem in removable:
+            if removed >= excess:
+                break
+            if self.store.delete(mem.id):
+                removed += 1
+        return removed
 

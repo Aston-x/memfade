@@ -25,6 +25,27 @@ try:
 except Exception:  # pragma: no cover
     HAS_SDK = False
 
+MAIBOT_ROOT = Path(r"G:\AI\许杏玖-MaiBot\MaiBot")
+HAS_HOST = MAIBOT_ROOT.is_dir() and (MAIBOT_ROOT / "src" / "plugin_runtime" / "webui_schema.py").is_file()
+
+
+@unittest.skipUnless(HAS_HOST, "未找到 MaiBot 宿主")
+class TestWebUIDeclaration(unittest.TestCase):
+    """webui.json 必须过宿主自己的校验器，否则面板静默不出现。"""
+
+    def test_webui_json_validates(self):
+        import sys
+
+        if str(MAIBOT_ROOT) not in sys.path:
+            sys.path.insert(0, str(MAIBOT_ROOT))
+        from src.plugin_runtime.webui_schema import load_webui_extension
+
+        adapter_dir = REPO_ROOT / "adapters" / "maibot"
+        extension = load_webui_extension(str(adapter_dir))
+        self.assertIsNotNone(extension, "宿主没读到 webui.json")
+        self.assertEqual(len(extension.pages), 2)
+
+
 
 class FakeLogger:
     def info(self, *args, **kwargs):
@@ -148,7 +169,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         engine = plugin._engine
         from memfade import MemoryDraft, MemoryKind, Scope
 
-        scope = Scope(platform="qq", chat_type="private", chat_id="1738157278")
+        scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
         engine.remember(
             MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
@@ -163,6 +184,23 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
     async def test_no_injection_without_memories(self):
         await self.plugin.handle_after_process(message=make_message("今天吃什么呢"))
         self.assertFalse(self.plugin._ctx.maisaka.context.appended, "没有记忆时不应注入空块")
+
+    async def test_profile_is_always_injected(self):
+        """「关于对方」的稳定事实不该等被问到才想起。"""
+
+        plugin = self.plugin
+        from memfade import MemoryDraft, MemoryKind, Scope
+
+        scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
+        plugin._engine.remember(
+            MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+        )
+        await plugin.handle_after_process(message=make_message("在吗"))
+        appended = plugin._ctx.maisaka.context.appended
+        self.assertTrue(appended, "画像应当常驻注入")
+        body = appended[0]["segments"][0]["content"]
+        self.assertIn("关于对方", body)
+        self.assertIn("许杏玖喜欢辣的食物", body)
 
     async def test_extracts_and_writes(self):
         plugin = self.plugin
@@ -180,8 +218,34 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         )
         await plugin.handle_after_process(message=make_message("悄悄话"))
         engine = plugin._engine
-        self.assertEqual(engine.store.count("qq:private:1738157278"), 1)
-        self.assertEqual(engine.store.count("qq:group:1127155154"), 0, "私聊记忆不应出现在群里")
+        self.assertEqual(engine.store.count("qq:session:sess-1"), 1)
+        self.assertEqual(engine.store.count("qq:session:sess-other"), 0, "别的会话不该看到")
+
+    async def test_command_scope_matches_injection_scope(self):
+        """命令拿到的 stream_id 必须和注入用的是同一个作用域键。"""
+
+        plugin = self.plugin
+        plugin._ctx.llm.reply = (
+            '[{"content":"许杏玖喜欢辣的食物","kind":"semantic","importance":0.8,"cross_scope":false}]'
+        )
+        await plugin.handle_after_process(message=make_message("我喜欢吃辣的"))
+        engine = plugin._engine
+        self.assertEqual(engine.store.count("qq:session:sess-1"), 1)
+        # 命令侧只有 stream_id，没有 message 结构
+        scope = plugin._scope_from_kwargs({"stream_id": "sess-1"})
+        self.assertEqual(scope.key(), "qq:session:sess-1")
+        self.assertEqual(len(engine.recall("辣", scope)), 1, "命令必须能查到刚写入的记忆")
+
+    async def test_different_sessions_are_isolated(self):
+        plugin = self.plugin
+        plugin._ctx.llm.reply = (
+            '[{"content":"群里的记忆","kind":"semantic","importance":0.8,"cross_scope":false}]'
+        )
+        await plugin.handle_after_process(message=make_message("在群里说", group_id="1127155154"))
+        engine = plugin._engine
+        self.assertEqual(engine.store.count("qq:session:sess-1"), 1)
+        other = plugin._scope_from_kwargs({"stream_id": "sess-2"})
+        self.assertEqual(len(engine.recall("群里的记忆", other)), 0, "别的会话不该看到")
 
     async def test_disabled_plugin_does_nothing(self):
         plugin = self.plugin

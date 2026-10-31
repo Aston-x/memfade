@@ -1,0 +1,195 @@
+{
+  "schema_version": 2,
+  "workspace_title": "记忆引擎",
+  "pages": [
+    {
+      "id": "memfade_overview",
+      "title": "记忆引擎",
+      "description": "查看记忆库的整体状态：多少条还在活跃、多少条已经淡出或归档。",
+      "placement": "workspace",
+      "icon": "database",
+      "queries": {
+        "overview": {
+          "api": "memfade_overview",
+          "version": "1"
+        }
+      },
+      "actions": {
+        "consolidate": {
+          "api": "memfade_consolidate",
+          "version": "1",
+          "confirmation": "确认现在就跑一轮记忆整理？会重算淡化档位、压缩旧记忆、合并重复。"
+        }
+      },
+      "content": [
+        {
+          "type": "grid",
+          "columns": 4,
+          "children": [
+            {
+              "type": "stat",
+              "label": "记忆总数",
+              "value": {
+                "source": "overview",
+                "field": "total"
+              }
+            },
+            {
+              "type": "stat",
+              "label": "活跃（进事实层）",
+              "value": {
+                "source": "overview",
+                "field": "by_status.active"
+              }
+            },
+            {
+              "type": "stat",
+              "label": "淡出中（进回声层）",
+              "value": {
+                "source": "overview",
+                "field": "by_status.fading"
+              }
+            },
+            {
+              "type": "stat",
+              "label": "已归档（不再注入）",
+              "value": {
+                "source": "overview",
+                "field": "by_status.archived"
+              }
+            }
+          ]
+        },
+        {
+          "type": "chart",
+          "label": "各淡化档位分布",
+          "chart_type": "bar",
+          "x": "label",
+          "y": "value",
+          "value": {
+            "source": "overview",
+            "field": "chart"
+          }
+        },
+        {
+          "type": "table",
+          "label": "最近写入的记忆",
+          "value": {
+            "source": "overview",
+            "field": "recent"
+          },
+          "columns": [
+            {
+              "field": "content",
+              "label": "内容"
+            },
+            {
+              "field": "kind",
+              "label": "种类"
+            },
+            {
+              "field": "status",
+              "label": "档位"
+            },
+            {
+              "field": "importance",
+              "label": "显著性"
+            },
+            {
+              "field": "strength",
+              "label": "当前强度"
+            },
+            {
+              "field": "recall_count",
+              "label": "被想起次数"
+            },
+            {
+              "field": "scope",
+              "label": "作用域"
+            }
+          ]
+        },
+        {
+          "type": "button",
+          "label": "立即整理一轮",
+          "action": "consolidate",
+          "variant": "primary"
+        }
+      ]
+    },
+    {
+      "id": "memfade_search",
+      "title": "记忆检索",
+      "description": "在记忆库里搜一搜，看看哪些内容被记住了、哪些已经淡出。",
+      "placement": "sidebar",
+      "icon": "list",
+      "queries": {
+        "result": {
+          "api": "memfade_search_result",
+          "version": "1"
+        }
+      },
+      "actions": {
+        "search": {
+          "api": "memfade_do_search",
+          "version": "1"
+        }
+      },
+      "content": [
+        {
+          "type": "input",
+          "name": "query",
+          "label": "关键词",
+          "value": ""
+        },
+        {
+          "type": "input",
+          "name": "limit",
+          "label": "最多几条",
+          "value": 10
+        },
+        {
+          "type": "button",
+          "label": "检索",
+          "action": "search",
+          "variant": "primary"
+        },
+        {
+          "type": "table",
+          "label": "检索结果",
+          "value": {
+            "source": "result",
+            "field": "results"
+          },
+          "columns": [
+            {
+              "field": "content",
+              "label": "内容"
+            },
+            {
+              "field": "kind",
+              "label": "种类"
+            },
+            {
+              "field": "tier",
+              "label": "注入层"
+            },
+            {
+              "field": "score",
+              "label": "得分"
+            },
+            {
+              "field": "importance",
+              "label": "显著性"
+            },
+            {
+              "field": "strength",
+              "label": "当前强度"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+

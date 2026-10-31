@@ -72,6 +72,8 @@ class MemorySectionConfig(PluginConfigBase):
     max_inject_tokens: int = Field(default=600, description="注入上下文的 token 预算")
     top_k: int = Field(default=8, description="每轮最多召回几条记忆")
     echo_max: int = Field(default=3, description="最多注入几条已淡出的旧记忆")
+    profile_items: int = Field(default=6, description="「关于对方」画像最多几条")
+    profile_chars: int = Field(default=300, description="画像块字数上限")
 
     extract_enabled: bool = Field(default=True, description="是否从对话中抽取记忆")
     extract_every_n: int = Field(default=3, description="每隔多少轮抽取一次")
@@ -210,6 +212,7 @@ class MemFadePlugin(MaiBotPlugin):
         self._last_injected: Dict[str, tuple] = {}
         self._reinject_interval: float = 300.0
         """记忆块内容没变时的重放间隔（秒）。"""
+        self._last_search: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------ #
     # 生命周期
@@ -297,28 +300,39 @@ class MemFadePlugin(MaiBotPlugin):
     def _scope_from_kwargs(self, kwargs: Dict[str, Any]) -> Scope:
         """从命令/工具的 kwargs 推作用域。
 
-        命令拿不到完整的 message 结构，退而用 stream_id 当会话标识——
-        至少保证「同一条命令在不同会话里看到不同的记忆」。
+        命令拿不到完整的 message 结构，但 ``stream_id`` 就是 ``session_id``，
+        所以直接用它当作用域键——和注入路径完全一致，不会「命令查不到记忆」。
         """
 
         parsed = self._parse_message(kwargs.get("message"))
-        if parsed.get("group_id") or parsed.get("user_id"):
+        if parsed.get("session_id"):
             return self._scope_of(parsed)
         stream_id = str(kwargs.get("stream_id") or kwargs.get("session_id") or "").strip()
         return Scope(
             platform=parsed.get("platform") or "qq",
-            chat_type="private",
+            chat_type="session",
             chat_id=stream_id or "unknown",
             cross_scope=False,
         )
 
     def _scope_of(self, parsed: Dict[str, Any]) -> Scope:
-        """构造作用域。会话内默认隔离，跨会话共享要显式开。"""
+        """构造作用域。
 
-        chat_id = parsed.get("group_id") or parsed.get("user_id") or "unknown"
+        用 **session_id** 而不是群号/用户号当作用域键，理由：
+
+        * MaiBot 的 ``session_id = md5(平台+账号+作用域+群号)``——
+          **一个群一份、私聊按人一份**，天生就是「会话」粒度；
+        * 命令收到的 ``stream_id`` 就是 ``session_id``，
+          所以命令与注入用的是同一个作用域键；
+        * 它是 md5，重启后不变。
+
+        群号/用户号另存进 ``meta``，方便人工审计时认人。
+        """
+
+        chat_id = parsed.get("session_id") or "unknown"
         return Scope(
             platform=parsed.get("platform") or "qq",
-            chat_type=parsed.get("chat_type") or "private",
+            chat_type="session",
             chat_id=str(chat_id),
             cross_scope=False,
         )
@@ -376,7 +390,12 @@ class MemFadePlugin(MaiBotPlugin):
                 query_vector=vector,
                 header=self.config.memory.inject_header or "记忆",
             )
-            if not context.text:
+            profile = engine.build_profile(
+                scope,
+                max_items=max(0, int(self.config.memory.profile_items)),
+                max_chars=max(0, int(self.config.memory.profile_chars)),
+            )
+            if not context.text and not profile:
                 return
             # 内容没变就不重复注入：记忆块每轮都塞一遍会污染上下文，
             # 也会让模型觉得「用户一直在重复同样的话」。
@@ -386,7 +405,7 @@ class MemFadePlugin(MaiBotPlugin):
             if context.text == last_text and now - last_at < self._reinject_interval:
                 return
             self._last_injected[session_id] = (now, context.text)
-            body = self._wrap_context(context.text)
+            body = self._wrap_context(context.text, profile)
             await self.ctx.maisaka.context.append(
                 stream_id=session_id,
                 segments=[{"type": "text", "content": body}],
@@ -404,18 +423,26 @@ class MemFadePlugin(MaiBotPlugin):
             self.ctx.logger.warning("[memfade] 注入记忆失败: %s", exc)
 
     @staticmethod
-    def _wrap_context(text: str) -> str:
+    def _wrap_context(text: str, profile: str = "") -> str:
         """给记忆块加系统前缀。
 
         不加前缀的话，模型会把这段当成「用户刚说的话」，
         从而做出「用户刚刚告诉了我这件事」这类错误反应。
         """
 
-        return (
+        blocks = []
+        if profile:
+            blocks.append(
+                "[系统·关于对方] 下面是你对这位用户的长期印象，"
+                "属于你已经知道的信息，不要重复确认：\n" + profile
+            )
+        if text:
+            blocks.append(
             "[系统·长期记忆] 以下是你自己长期记住的内容，属于背景信息，"
             "不需要主动提起；只有对方问到或话题正好相关时才自然带出来：\n\n"
-            f"{text}"
-        )
+                f"{text}"
+            )
+        return "\n\n".join(blocks)
 
     async def _maybe_extract(self, parsed: Dict[str, Any], scope: Scope) -> None:
         """按节奏抽取记忆。"""
@@ -435,7 +462,12 @@ class MemFadePlugin(MaiBotPlugin):
         pending = list(buffer)
         buffer.clear()
         try:
-            written = await engine.remember_from_messages(pending, scope, source=key)
+            meta = {
+                "group_id": parsed.get("group_id") or "",
+                "user_id": parsed.get("user_id") or "",
+                "chat_type": parsed.get("chat_type") or "",
+            }
+            written = await engine.remember_from_messages(pending, scope, source=key, meta=meta)
             if written:
                 self.ctx.logger.info("[memfade] 抽取到 %d 条新记忆（%s）", len(written), key)
         except Exception as exc:
@@ -631,6 +663,70 @@ class MemFadePlugin(MaiBotPlugin):
         stats["enabled"] = bool(self.config.plugin.enabled)
         stats["db_path"] = engine.store.db_path
         return stats
+
+    @API("memfade_overview", description="记忆引擎总览：各淡化档位分布与最近记忆", version="1")
+    async def memfade_overview(self, limit: int = 20) -> Dict[str, Any]:
+        """管理界面用的总览数据。"""
+
+        engine = self._engine
+        if engine is None:
+            return {"total": 0, "chart": [], "recent": [], "by_status": {}}
+        counts = engine.store.status_counts()
+        chart = [
+            {"label": "活跃", "value": counts.get("active", 0)},
+            {"label": "淡出中", "value": counts.get("fading", 0)},
+            {"label": "已成摘要", "value": counts.get("gisted", 0)},
+            {"label": "已归档", "value": counts.get("archived", 0)},
+            {"label": "已被取代", "value": counts.get("superseded", 0)},
+        ]
+        recent = []
+        for mem in engine.store.iter_all(limit=max(1, min(100, int(limit)))):
+            recent.append(
+                {
+                    "content": mem.content[:80],
+                    "kind": mem.kind.value,
+                    "status": mem.status.value,
+                    "importance": round(mem.importance, 2),
+                    "strength": round(engine.effective_strength(mem), 2),
+                    "recall_count": mem.recall_count,
+                    "scope": mem.scope_key,
+                }
+            )
+        return {
+            "total": engine.store.count(),
+            "by_status": counts,
+            "chart": chart,
+            "recent": recent,
+        }
+
+    @API("memfade_do_search", description="在记忆库里检索（WebUI 动作）", version="1")
+    async def memfade_do_search(self, query: str = "", limit: int = 10) -> Dict[str, Any]:
+        """执行检索，结果存起来供表格显示。"""
+
+        engine = self._engine
+        if engine is None:
+            self._last_search = []
+            return {"count": 0}
+        scope = Scope(platform="qq", chat_type="session", chat_id="webui")
+        hits = engine.recall(query, scope, top_k=max(1, min(50, int(limit))))
+        self._last_search = [
+            {
+                "content": hit.memory.content[:100],
+                "kind": hit.memory.kind.value,
+                "tier": hit.tier,
+                "score": round(hit.score, 3),
+                "importance": round(hit.memory.importance, 2),
+                "strength": round(hit.strength_eff, 2),
+            }
+            for hit in hits
+        ]
+        return {"count": len(self._last_search)}
+
+    @API("memfade_search_result", description="读取上一次检索的结果", version="1")
+    async def memfade_search_result(self) -> Dict[str, Any]:
+        """表格数据源。"""
+
+        return {"results": getattr(self, "_last_search", [])}
 
     @API("memfade_search", description="按关键词检索记忆", version="1")
     async def memfade_search(self, query: str = "", limit: int = 8) -> Dict[str, Any]:

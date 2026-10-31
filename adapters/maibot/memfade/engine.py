@@ -69,6 +69,7 @@ class MemoryEngine:
         *,
         now: Optional[float] = None,
         skip_dedup: bool = False,
+        meta: Optional[dict] = None,
     ) -> Optional[Memory]:
         """写入一条记忆。命中重复则不新建，返回已有那条。"""
 
@@ -105,7 +106,7 @@ class MemoryEngine:
             predicate=draft.predicate,
             object=draft.object,
             source=draft.source,
-            meta=dict(draft.meta),
+            meta={**dict(draft.meta), **(meta or {})},
         )
         self.store.add(memory, fts_text(content))
         self._embed(memory)
@@ -117,6 +118,7 @@ class MemoryEngine:
         scope: Scope,
         *,
         now: Optional[float] = None,
+        meta: Optional[dict] = None,
     ) -> list[Memory]:
         """批量写入，自动跳过近似重复。"""
 
@@ -134,7 +136,7 @@ class MemoryEngine:
             if near is not None:
                 out.append(near)
                 continue
-            mem = self.remember(draft, scope, now=now, skip_dedup=True)
+            mem = self.remember(draft, scope, now=now, skip_dedup=True, meta=meta)
             if mem is not None:
                 out.append(mem)
         return out
@@ -146,6 +148,7 @@ class MemoryEngine:
         *,
         source: str = "",
         now: Optional[float] = None,
+        meta: Optional[dict] = None,
     ) -> list[Memory]:
         """从一段对话抽取记忆并落库（异步，走 LLM）。
 
@@ -155,7 +158,7 @@ class MemoryEngine:
         result = await self.extractor.extract(messages, source=source)
         if not result.drafts:
             return []
-        return self.remember_many(result.drafts, scope, now=now)
+        return self.remember_many(result.drafts, scope, now=now, meta=meta)
 
     def _find_near_duplicate(self, content: str, scope_key: str) -> Optional[Memory]:
         """近似重复检测。命中的话把旧记忆强化一下而不是新建。"""
@@ -231,6 +234,20 @@ class MemoryEngine:
         if reinforce and context.hits:
             self.reinforce([h.memory.id for h in context.hits], now=now)
         return context
+
+    def build_profile(
+        self,
+        scope: Scope,
+        *,
+        now: Optional[float] = None,
+        max_items: int = 8,
+        max_chars: int = 400,
+    ) -> str:
+        """「关于对方」的稳定事实块，常驻注入。"""
+
+        return self.retriever.build_profile(
+            scope.key(), now=now, max_items=max_items, max_chars=max_chars
+        )
 
     def reinforce(self, memory_ids: Iterable[int], *, now: Optional[float] = None) -> int:
         """强化一批记忆。带冷却期，避免正反馈刷分。"""

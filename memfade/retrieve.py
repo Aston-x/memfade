@@ -262,6 +262,58 @@ class MemoryRetriever:
         body = mem.summary.strip() or mem.content.strip()
         return f"- （可能已经变了，仅供参考）{body}"
 
+    def build_profile(
+        self,
+        scope_key: str,
+        *,
+        now: Optional[float] = None,
+        max_items: int = 8,
+        max_chars: int = 400,
+        kinds: Optional[Sequence[str]] = None,
+    ) -> str:
+        """构建「关于对方」的稳定事实块。
+
+        与检索召回是两回事：检索靠**这次问了什么**，
+        而画像是「这个人是谁」——名字、偏好、约定、忌讳。
+        这些东西**不该等被问到才想起**，所以常驻注入。
+
+        只取 ACTIVE 档的稳定类记忆（事实/偏好/关系/做法），
+        一次性事件不进画像。
+        """
+
+        ts = float(now if now is not None else time.time())
+        stable_kinds = kinds or ("semantic", "preference", "relation", "skill")
+        memories = self.store.iter_scope(
+            scope_key,
+            statuses=("active",),
+            kinds=list(stable_kinds),
+            limit=200,
+        )
+        scored: list[tuple[float, Memory]] = []
+        for mem in memories:
+            if mem.pinned:
+                score = 10.0
+            else:
+                eff = effective_strength(mem, ts, self.policy)
+                score = mem.importance * (0.4 + 0.6 * eff) + 0.05 * mem.recall_count
+            scored.append((score, mem))
+        scored.sort(key=lambda pair: (pair[0], pair[1].created_at), reverse=True)
+
+        lines: list[str] = []
+        used = 0
+        for _, mem in scored:
+            if len(lines) >= max_items:
+                break
+            body = mem.content.strip()
+            if not body:
+                continue
+            line = f"- {body}"
+            if used + len(line) > max_chars:
+                break
+            lines.append(line)
+            used += len(line)
+        return "\n".join(lines)
+
 
 def _compose_fact(mem: Memory) -> str:
     """把 (subject, predicate, object) 拼成一句可读的话。"""

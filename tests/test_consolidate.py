@@ -143,3 +143,51 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
         data = report.as_dict()
         for key in ("scanned", "decayed", "status_changed", "gisted", "merged", "superseded", "purged"):
             self.assertIn(key, data)
+
+    async def test_trim_over_cap(self):
+        self.config.maintenance.max_memories_per_scope = 5
+        samples = [
+            "今天中午在楼下吃了炸鸡",
+            "晚上加班到很晚才回家",
+            "周末打算去爬山看日出",
+            "最近在追一部科幻剧",
+            "养的那盆绿萝终于开花了",
+            "换了新的机械键盘手感不错",
+            "感冒了嗓子有点疼",
+            "地铁上遇到一个很 funny 的小孩",
+            "论文被导师打回来重写",
+            "存款终于够买那台显示器",
+            "学着做了一锅红烧肉",
+            "信用卡账单又超预算了",
+        ]
+        for text in samples:
+            draft = MemoryDraft(content=text, kind=MemoryKind.EPISODIC, importance=0.4)
+            self.engine.remember(draft, SCOPE)
+        self.assertEqual(self.engine.store.count(SCOPE.key()), 12)
+        await self.engine.consolidate(SCOPE)
+        after = self.engine.store.count(SCOPE.key())
+        self.assertLessEqual(after, 5, "超出上限后应当淘汰最弱的")
+
+    async def test_trim_keeps_pinned(self):
+        self.config.maintenance.max_memories_per_scope = 3
+        keep = self.engine.remember(
+            MemoryDraft(content="置顶不许动的重要事实", kind=MemoryKind.SEMANTIC, importance=0.95), SCOPE
+        )
+        self.engine.pin(keep.id)
+        samples = [
+            "去超市补货了日用品",
+            "骑车上班的路上被淋湿了",
+            "整理柜子翻出来一张旧照片",
+            "预约了下周的体检",
+            "试做了新的咖啡冲泡方式",
+            "朋友寄了一箱东北的苹果",
+            "把旧手机里的照片备份了",
+            "计划暑期去一趟青海湖",
+            "拼好了一个很久以前买的模型",
+            "在读书会分享了一本书",
+        ]
+        for text in samples:
+            draft = MemoryDraft(content=text, kind=MemoryKind.EPISODIC, importance=0.3)
+            self.engine.remember(draft, SCOPE)
+        await self.engine.consolidate(SCOPE)
+        self.assertIsNotNone(self.engine.store.get(keep.id), "置顶的记忆不该被淘汰")

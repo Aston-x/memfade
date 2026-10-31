@@ -130,6 +130,14 @@ class MaintenanceConfig:
     enable_gist: bool = True
     enable_supersede: bool = True
 
+    max_memories_per_scope: int = 5000
+    """单个会话的记忆条数上限。
+
+    聊天机器人长年在线，记忆库会一直涨。超限后按
+    「已归档 → 残影 → 淡出中 → 活跃」的顺序淘汰最弱的，
+    置顶的永不淘汰。
+    """
+
 
 @dataclass
 class LLMConfig:

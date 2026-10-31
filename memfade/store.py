@@ -371,6 +371,26 @@ class MemoryStore:
             ).fetchall()
         return [_row_to_memory(r) for r in rows]
 
+    def iter_all(self, limit: int = 200, statuses: Optional[Sequence[str]] = None) -> list[Memory]:
+        """列出全部作用域的记忆（管理视角，WebUI 用）。
+
+        ⚠ 这是**唯一**一条不按作用域过滤的读取路径，
+        只给管理员界面用；对 Bot 而言永远不该走这条。
+        """
+
+        clauses: list[str] = []
+        params: list[Any] = []
+        if statuses:
+            clauses.append("status IN (" + ",".join("?" * len(statuses)) + ")")
+            params.extend(statuses)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(int(limit))
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM memories {where} ORDER BY updated_at DESC LIMIT ?", params
+            ).fetchall()
+        return [_row_to_memory(r) for r in rows]
+
     def count(self, scope_key: Optional[str] = None) -> int:
         with self._lock:
             if scope_key is None:

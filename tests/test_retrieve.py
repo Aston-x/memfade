@@ -121,3 +121,28 @@ class TestRetrieval(unittest.TestCase):
         self.assertIsNotNone(second)
         self.assertEqual(first.id, second.id, "近似重复应复用已有记忆而不是新建")
         self.assertEqual(self.engine.store.count(SCOPE.key()), 1)
+
+    def test_profile_lists_stable_facts(self):
+        fact = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
+        self.engine.remember(fact, SCOPE)
+        profile = self.engine.build_profile(SCOPE)
+        self.assertIn("许杏玖喜欢辣的食物", profile)
+
+    def test_profile_excludes_episodic(self):
+        event = MemoryDraft(content="上周三一起去吃了炸鸡", kind=MemoryKind.EPISODIC, importance=0.6)
+        self.engine.remember(event, SCOPE)
+        profile = self.engine.build_profile(SCOPE)
+        self.assertNotIn("炸鸡", profile, "一次性事件不该进画像")
+
+    def test_profile_is_scope_isolated(self):
+        other = Scope(platform="qq", chat_type="session", chat_id="other")
+        fact = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
+        self.engine.remember(fact, other)
+        self.assertEqual(self.engine.build_profile(SCOPE), "", "别的会话的画像不该出现")
+
+    def test_profile_respects_limits(self):
+        for i in range(10):
+            draft = MemoryDraft(content=f"关于许杏玖的第{i}条稳定事实", kind=MemoryKind.SEMANTIC, importance=0.8)
+            self.engine.remember(draft, SCOPE)
+        profile = self.engine.build_profile(SCOPE, max_items=3)
+        self.assertLessEqual(len(profile.splitlines()), 3)
