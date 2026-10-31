@@ -1,0 +1,49 @@
+{
+  "db_path": {
+    "description": "SQLite 记忆库路径",
+    "type": "string",
+    "default": "memfade.db",
+    "hint": "相对于 AstrBot 数据目录"
+  },
+  "top_k": {
+    "description": "每轮最多召回多少条记忆",
+    "type": "int",
+    "default": 6
+  },
+  "max_inject_tokens": {
+    "description": "注入上下文的 token 预算",
+    "type": "int",
+    "default": 600
+  },
+  "echo_max": {
+    "description": "最多注入多少条已淡出的旧记忆",
+    "type": "int",
+    "default": 2
+  },
+  "extract_enabled": {
+    "description": "是否从对话中抽取记忆",
+    "type": "bool",
+    "default": true
+  },
+  "extract_every_n": {
+    "description": "每隔多少条消息抽取一次",
+    "type": "int",
+    "default": 3
+  },
+  "min_importance": {
+    "description": "低于此显著性的内容不入库",
+    "type": "float",
+    "default": 0.35
+  },
+  "use_embedding": {
+    "description": "是否启用向量检索（关闭则只用关键词检索）",
+    "type": "bool",
+    "default": true
+  },
+  "archive_after_days": {
+    "description": "归档多少天后物理删除（0 表示永不删除）",
+    "type": "int",
+    "default": 0
+  }
+}
+

@@ -1,0 +1,28 @@
+[plugin]
+enabled = false
+config_version = "2.0.0"
+verbose = false
+
+[memory]
+inject_enabled = true
+inject_header = "记忆"
+max_inject_tokens = 600
+top_k = 8
+echo_max = 3
+extract_enabled = true
+extract_every_n = 3
+extract_min_messages = 2
+min_importance = 0.35
+use_host_llm = true
+llm_task_name = "memory"
+use_host_embedding = true
+db_filename = "memfade.db"
+cross_session = false
+
+[fade]
+recall_alpha = 0.35
+weaken_alpha = 0.5
+archive_after_days = 0
+maintain_interval_minutes = 60
+gist_enabled = true
+

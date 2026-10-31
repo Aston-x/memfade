@@ -1,0 +1,205 @@
+# memfade · 记忆淡化引擎
+
+给聊天机器人用的**可移植长期记忆插件**。
+
+> 别的记忆库负责记住「发生过什么」，
+> memfade 还管「这件事**还该不该被想起来**」。
+
+```
+核心 2551 行 · 零第三方依赖 · 单文件 SQLite · 75 项测试
+适配器 1389 行 · 覆盖 MaiBot / LangBot / AstrBot / NoneBot2 / Koishi
+```
+
+## 为什么需要它
+
+聊天机器人的记忆，长期只有两个极端：只用上下文窗口，隔一天就失忆；
+或者全塞进向量库，噪声越来越大、检索越来越慢，还说不清「为什么想起这件事」。
+
+更具体的三个真实症状：
+
+1. **记忆里重复语段太多**——同一件事换个标点、换个语序存成好几条；
+2. **总提起已经过去的小事**——一次性事件和稳定事实被同等对待，每次聊天都翻旧账；
+3. **私聊内容漏进群里**——同一个机器人在不同会话间共享了不该共享的记忆。
+
+memfade 就是照着这三条来设计的。
+
+## 五个核心机制
+
+### 1. 双轴模型：把「重要」和「持久」拆开
+
+大多数记忆库把这两件事压进同一个字段，于是重要事实会跟着时间一起掉分。
+memfade 坚持两条独立的轴：
+
+* **`importance`（显著性）**——这条内容本身有多重要。只在写入时判定，之后永不随时间变化。
+  它决定检索权重，以及这条记忆能活多久。
+* **`strength`（强度）**——这条记忆现在还剩多少。随「距上次被想起的时间」衰减，
+  每次被想起就回升。它回答的是「此刻还想不想得起来」。
+
+### 2. 淡化梯度
+
+淡化不是二元的「留 / 删」，是一条有档位的坡道：
+
+| 档位 | 含义 | 还能被召回吗 | 注入时 |
+|---|---|---|---|
+| `ACTIVE` | 正常状态 | 是 | 作为「事实层」，当作现在仍然成立的知识 |
+| `FADING` | 开始淡出 | 是 | 作为「回声层」，带「可能已经变了」的标记，且限量 |
+| `GISTED` | 已压成一行摘要 | 是（极低权重） | 只带摘要，细节已不可考 |
+| `ARCHIVED` | 归档 | 否 | 完全不进上下文，但原文仍留在库里可审计 |
+
+旧事不会消失，但也不会占据日常对话。这是「总提旧事」的解药。
+
+### 3. 幂等的艾宾浩斯衰减
+
+```
+stability = base_stability(种类)
+            x (1 + importance_gain x importance)      重要 -> 活得久
+            x min(ceiling, growth ^ recall_count)      复习 -> 更稳（间隔重复）
+
+effective_strength(now) = strength x exp(-Δdays / stability)
+```
+
+关键工程细节：**始终按「锚点时刻」重算，而不是每天乘一次系数。**
+维护任务跑一次、跑两次、隔一天再跑，结果完全一致。
+
+### 4. 失败即闭的会话隔离
+
+每条记忆带一个作用域键（`qq:group:1127155154` / `qq:private:1738157278`）。
+检索时只有一条过滤条件：
+
+```sql
+scope_key = 当前会话  OR  cross_scope = 1
+```
+
+这里**没有**「找不到就退回全局」的兜底。宁可这条消息没有记忆可用，
+也不能把别的会话的内容漏进来。跨会话共享必须显式开启。
+
+### 5. 分层注入
+
+召回结果按淡化档位分两层进 prompt：
+
+```
+[记忆]
+- 许杏玖喜欢辣的食物
+- 许杏玖住在上海
+
+[记忆·旧事]
+- （可能已经变了，仅供参考）上周三一起去吃了炸鸡
+```
+
+事实层给「现在仍然成立」的知识，回声层只在被直接问起时才带出来。
+
+## 架构
+
+核心包零框架依赖、零第三方依赖；每个适配器只负责三件事：
+把宿主消息翻译成统一格式、把记忆翻译回宿主上下文、把宿主的 LLM 接到核心协议上。
+
+```
+memfade/
+  types.py         Memory / Scope / MemoryKind / MemoryStatus
+  decay.py         淡化引擎：稳定性、保留率、事件、档位求解
+  retrieve.py      混合检索 + 加权打分 + 分层组装
+  store.py         SQLite + FTS5 二元组索引 + 向量 BLOB
+  consolidate.py   离线整理：衰减重算 / gist / 合并 / 矛盾仲裁
+  extract.py       抽取（LLM 为主，规则兜底）
+  dedup.py         近似重复判定与合并
+  textutil.py      中文二元组、Dice 相似度
+  llm.py           LLM 协议与标准库 HTTP 实现
+  embedding.py     嵌入协议与标准库 HTTP 实现
+  engine.py        门面：适配器唯一入口
+
+adapters/
+  maibot/          MaiBot 插件（复用宿主 LLM 与嵌入模型）
+  nonebot2/        NoneBot2
+  langbot/         LangBot
+  astrbot/         AstrBot
+  koishi/          Koishi
+  http/            通用 JSON-over-HTTP 侧车
+```
+
+**热路径同步、冷路径异步**：召回与注入是纯同步函数，不含一个 `await`；
+只有抽取和摘要（每 N 轮一次）走 async。这样在同步与异步宿主里都能用。
+
+## 快速上手
+
+### MaiBot
+
+把 `adapters/maibot/` 整个目录复制到 MaiBot 的 `plugins/` 目录，
+在插件管理里启用即可。**不需要额外配 API key**——
+抽取用的大模型与向量模型直接复用宿主已经在 MaiBot 里配好的那些。
+
+```bash
+python scripts/build_plugin.py --dest G:/AI/许杏玖-MaiBot/MaiBot/plugins
+```
+
+命令：
+
+* `/记忆`——查看当前会话记住了多少东西；
+* `/记忆 搜 <关键词>`——检索；
+* `/记忆 整理`——立刻跑一轮整理；
+* `/记住 <内容>`——显式记住；
+* `/忘掉 <片段>`——忘掉一条。
+
+### 直接用核心包
+
+```python
+from memfade import MemoryEngine, MemoryDraft, MemoryKind, Scope
+
+engine = MemoryEngine(db_path="memfade.db")
+scope = Scope(platform="qq", chat_type="private", chat_id="1738157278")
+
+engine.remember(
+    MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.8),
+    scope,
+)
+
+ctx = engine.build_context("今天吃什么", scope)
+print(ctx.text)
+```
+
+## 借鉴来源
+
+这个项目的思路不是凭空来的，下面这些项目提供了关键模块的参考：
+
+| 来源 | 借鉴了什么 |
+|---|---|
+| [congling](https://github.com/LUOSHUI319/astrbot_plugin_concling)（AstrBot） | 分级遗忘曲线、稳定性随复习次数增长、**按锚点重算的幂等衰减** |
+| [MemoryBank](https://github.com/zhongwanjun/MemoryBank-SiliconFriend) | 艾宾浩斯曲线 `exp(-t/τ)`、召回即强化的思想 |
+| [Engram](https://github.com/foramoment/engram-ai-memory) | 幂等衰减与剪枝、RRF 混合检索、访问提权 |
+| [memory-brain](https://github.com/peterpoal134/memory-brain)（AstrBot） | core + 多适配器的架构、**中文二元组 FTS5**、混合检索打分 |
+| [A-MEM](https://github.com/WujiangXu/AgenticMemory) | 记忆的动态索引与链接 |
+| [memorylens-bench](https://github.com/Neal006/memorylens-bench) | Recall@T / Temporal Drift / Contradiction 三个评测指标 |
+| [feiyu-memory](https://github.com/Deepsleep-one/astrbot-plugin-feiyu-memory) | 范围隔离与证据链记忆 |
+| [MaiBot A_Memorix](https://github.com/MaiM-with-u/maibot) | 残留学习式强化、双轴生命周期的工程化写法 |
+
+memfade 在这些基础上的差异化：显著性/持久度双轴分离、
+四档淡化梯度、事实层/回声层双层注入、失败即闭的会话隔离。
+
+## 开发
+
+```bash
+python -m unittest discover -s tests -t .     # 全部测试（标准库 unittest，无第三方依赖）
+python scripts/build_plugin.py --zip          # 打包各宿主适配器
+python scripts/bench_real_data.py --db <MaiBot.db>   # 在真实聊天数据上量去重/淡化/隔离
+```
+
+## 文档
+
+* [架构](docs/ARCHITECTURE.md)——为什么是 core + adapters，热路径/冷路径怎么切
+* [淡化算法](docs/DECAY.md)——每一个设计选择的理由，尤其是「为什么不那么做」
+* [GitHub 调研](docs/RESEARCH.md)——查了哪些项目、借鉴了什么、什么没照搬
+
+## 实机验证
+
+用 MaiBot 的真实消息库（535 条）跑一遍：
+
+```
+① 去重率     : 17.5%（83 条被判重复，含实际踩过的「显卡跑不动两个模型」）
+② 淡化       : 30 天后只剩 3 条稳定事实在事实层，其余退场
+③ 跨会话泄漏 : 0 条
+```
+
+## License
+
+MIT
+
+

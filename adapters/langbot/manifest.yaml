@@ -1,0 +1,146 @@
+apiVersion: v1
+kind: Plugin
+metadata:
+  author: memfade
+  name: MemFade
+  repository: https://github.com/Aston-x/memfade
+  version: 0.1.0
+  description:
+    en_US: Memory with forgetting. Ebbinghaus decay, tiered fading, strict session isolation.
+    zh_Hans: 会记得，也会忘得恰到好处。艾宾浩斯衰减、四档淡化梯度、会话严格隔离。
+    zh_Hant: 會記得，也會忘得恰到好處。艾賓浩斯衰減、四檔淡化梯度、會話嚴格隔離。
+    ja_JP: 記憶に残るが、忘れるタイミングも正しく。艾賓浩ス減衰、4段階の減衰、会話隔離。
+  label:
+    en_US: MemFade
+    zh_Hans: 记忆淡化
+    zh_Hant: 記憶淡化
+    ja_JP: 記憶淡化
+spec:
+  config:
+    - name: db_path
+      type: string
+      label:
+        en_US: Database path
+        zh_Hans: 数据库路径
+      description:
+        en_US: Path of the SQLite memory database.
+        zh_Hans: SQLite 记忆库路径。
+      default: memfade.db
+    - name: top_k
+      type: integer
+      label:
+        en_US: Recall count
+        zh_Hans: 召回条数
+      description:
+        en_US: How many memories to recall per turn.
+        zh_Hans: 每轮最多召回多少条记忆。
+      default: 6
+    - name: max_inject_tokens
+      type: integer
+      label:
+        en_US: Injection token budget
+        zh_Hans: 注入 token 预算
+      description:
+        en_US: Token budget for injected memory context.
+        zh_Hans: 注入上下文的 token 预算。
+      default: 600
+    - name: echo_max
+      type: integer
+      label:
+        en_US: Faded memory limit
+        zh_Hans: 旧事注入上限
+      description:
+        en_US: How many faded memories may be injected as background.
+        zh_Hans: 最多注入多少条已淡出的旧记忆。
+      default: 2
+    - name: extract_enabled
+      type: boolean
+      label:
+        en_US: Extract memories
+        zh_Hans: 抽取记忆
+      description:
+        en_US: Whether to extract memories from conversations.
+        zh_Hans: 是否从对话中抽取记忆。
+      default: true
+    - name: extract_every_n
+      type: integer
+      label:
+        en_US: Extract every N turns
+        zh_Hans: 每 N 轮抽取一次
+      description:
+        en_US: Run extraction every N messages.
+        zh_Hans: 每隔多少条消息抽取一次。
+      default: 3
+    - name: min_importance
+      type: float
+      label:
+        en_US: Minimum importance
+        zh_Hans: 最低显著性
+      description:
+        en_US: Memories below this importance are discarded.
+        zh_Hans: 低于此显著性的内容不入库。
+      default: 0.35
+    - name: llm_base_url
+      type: string
+      label:
+        en_US: LLM base URL
+        zh_Hans: LLM 接口地址
+      description:
+        en_US: OpenAI-compatible endpoint for extraction. Leave empty to use rule-based extraction only.
+        zh_Hans: OpenAI 兼容接口地址，用于记忆抽取。留空则只用规则抽取。
+      default: ""
+    - name: llm_api_key
+      type: string
+      label:
+        en_US: LLM API key
+        zh_Hans: LLM API Key
+      description:
+        en_US: API key for the extraction endpoint.
+        zh_Hans: 抽取接口的 API Key。
+      default: ""
+    - name: llm_model
+      type: string
+      label:
+        en_US: LLM model
+        zh_Hans: LLM 模型名
+      description:
+        en_US: Model name used for extraction.
+        zh_Hans: 用于抽取的模型名。
+      default: ""
+    - name: embedding_base_url
+      type: string
+      label:
+        en_US: Embedding base URL
+        zh_Hans: 向量接口地址
+      description:
+        en_US: OpenAI-compatible embeddings endpoint. Leave empty to use keyword search only.
+        zh_Hans: OpenAI 兼容的向量接口。留空则只用关键词检索。
+      default: ""
+    - name: embedding_api_key
+      type: string
+      label:
+        en_US: Embedding API key
+        zh_Hans: 向量 API Key
+      description:
+        en_US: API key for the embeddings endpoint.
+        zh_Hans: 向量接口的 API Key。
+      default: ""
+    - name: embedding_model
+      type: string
+      label:
+        en_US: Embedding model
+        zh_Hans: 向量模型名
+      description:
+        en_US: Model name used for embeddings.
+        zh_Hans: 用于向量化的模型名。
+      default: ""
+    - name: archive_after_days
+      type: integer
+      label:
+        en_US: Purge archived after days
+        zh_Hans: 归档后清理天数
+      description:
+        en_US: Physically delete archived memories after N days. 0 keeps them forever.
+        zh_Hans: 归档多少天后物理删除。0 表示永不删除。
+      default: 0
+

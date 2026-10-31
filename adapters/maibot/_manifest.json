@@ -1,0 +1,50 @@
+{
+  "manifest_version": 2,
+  "version": "0.1.0",
+  "name": "记忆淡化引擎 (memfade)",
+  "description": "带艾宾浩斯式淡化的长期记忆：记得住，也忘得恰到好处。会话严格隔离，旧事自动退场。",
+  "author": {
+    "name": "memfade",
+    "url": "https://github.com/Aston-x/memfade"
+  },
+  "license": "MIT",
+  "urls": {
+    "repository": "https://github.com/Aston-x/memfade",
+    "homepage": "https://github.com/Aston-x/memfade",
+    "documentation": "https://github.com/Aston-x/memfade/tree/main/docs",
+    "issues": "https://github.com/Aston-x/memfade/issues"
+  },
+  "changelog": "CHANGELOG.md",
+  "host_application": {
+    "min_version": "1.3.0",
+    "max_version": "1.3.99"
+  },
+  "sdk": {
+    "min_version": "2.0.0",
+    "max_version": "2.99.99"
+  },
+  "dependencies": [],
+  "display": {
+    "icon": {
+      "type": "local",
+      "value": "assets/icon.svg",
+      "fallback": "brain",
+      "background": "#1C272C"
+    }
+  },
+  "capabilities": [
+    "llm.generate",
+    "llm.embed",
+    "maisaka.context.append",
+    "send.text"
+  ],
+  "i18n": {
+    "default_locale": "zh-CN",
+    "locales_path": "_locales",
+    "supported_locales": [
+      "zh-CN"
+    ]
+  },
+  "id": "memfade.memory"
+}
+

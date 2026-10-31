@@ -1,0 +1,7 @@
+name: astrbot_plugin_memfade
+display_name: 记忆淡化引擎
+desc: 会记得，也会忘得恰到好处。艾宾浩斯衰减、四档淡化梯度、会话严格隔离。
+version: v0.1.0
+author: memfade
+repo: https://github.com/Aston-x/memfade
+

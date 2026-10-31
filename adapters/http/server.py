@@ -1,0 +1,313 @@
+"""memfade · HTTP 侧车。
+
+一个只用标准库写的本地 HTTP 服务，把 memfade 引擎暴露成 JSON 接口。
+
+**它解决什么问题？**
+
+memfade 的核心是 Python。但市面上的 QQ 机器人不止 Python：
+Koishi 是 TypeScript，QQ 频道的 SDK 也有 Node 版本。
+与其给每个语言重写一遍淡化算法（必然走样），不如让核心只跑一份，
+其它语言通过 HTTP 调用它。
+
+接口：
+
+    GET  /health              健康检查
+    POST /remember            写入记忆
+    POST /recall              召回记忆
+    POST /context             召回 + 分层组装（返回可直接注入的文本）
+    POST /consolidate         跑一轮整理
+    GET  /stats               统计
+
+鉴权：请求头 ``X-MemFade-Token``，与服务端 ``--token`` 一致才放行。
+默认只监听 127.0.0.1。
+
+启动：
+
+    python adapters/http/server.py --db memfade.db --port 8787 --token secret
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Dict, Optional
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from memfade import MemFadeConfig, MemoryDraft, MemoryKind, Scope  # noqa: E402
+from memfade.engine import MemoryEngine  # noqa: E402
+
+
+def _scope_from(payload: Dict[str, Any]) -> Scope:
+    """从请求体构造作用域。跨会话共享必须显式打开。"""
+
+    raw = payload.get("scope") or {}
+    if not isinstance(raw, dict):
+        raw = {}
+    return Scope(
+        platform=str(raw.get("platform") or "qq"),
+        chat_type=str(raw.get("chat_type") or "private"),
+        chat_id=str(raw.get("chat_id") or "default"),
+        cross_scope=bool(raw.get("cross_scope", False)),
+    )
+
+
+class MemFadeHTTPService:
+    """业务逻辑：所有 HTTP handler 都调它。"""
+
+    def __init__(self, engine: MemoryEngine) -> None:
+        self.engine = engine
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_thread: Optional[threading.Thread] = None
+
+    def start_loop(self) -> None:
+        """起一个常驻事件循环，供异步接口使用。"""
+
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=loop.run_forever, name="memfade-loop", daemon=True)
+        thread.start()
+        self._loop = loop
+        self._loop_thread = thread
+
+    def stop_loop(self) -> None:
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._loop_thread is not None:
+            self._loop_thread.join(timeout=3)
+        if self._loop is not None:
+            self._loop.close()
+            self._loop = None
+
+    def _run_async(self, coro: Any) -> Any:
+        if self._loop is None:
+            return asyncio.run(coro)
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result(timeout=120)
+
+    # -- 接口实现 ------------------------------------------------------ #
+
+    def remember(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        scope = _scope_from(payload)
+        drafts_raw = payload.get("drafts")
+        drafts: list[MemoryDraft] = []
+        if isinstance(drafts_raw, list) and drafts_raw:
+            for item in drafts_raw:
+                if not isinstance(item, dict):
+                    continue
+                drafts.append(
+                    MemoryDraft(
+                        content=str(item.get("content") or "").strip(),
+                        kind=_kind_of(item.get("kind")),
+                        importance=float(item.get("importance") or 0.5),
+                        subject=str(item.get("subject") or ""),
+                        predicate=str(item.get("predicate") or ""),
+                        object=str(item.get("object") or ""),
+                        source=str(item.get("source") or "http"),
+                        cross_scope=bool(item.get("cross_scope", False)),
+                    )
+                )
+        else:
+            content = str(payload.get("content") or "").strip()
+            if content:
+                drafts.append(
+                    MemoryDraft(
+                        content=content,
+                        kind=_kind_of(payload.get("kind")),
+                        importance=float(payload.get("importance") or 0.5),
+                        subject=str(payload.get("subject") or ""),
+                        predicate=str(payload.get("predicate") or ""),
+                        object=str(payload.get("object") or ""),
+                        source=str(payload.get("source") or "http"),
+                        cross_scope=bool(payload.get("cross_scope", False)),
+                    )
+                )
+        if not drafts:
+            return {"ok": True, "written": 0, "ids": []}
+        written = self.engine.remember_many(drafts, scope)
+        return {"ok": True, "written": len(written), "ids": [m.id for m in written]}
+
+    def recall(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        scope = _scope_from(payload)
+        query = str(payload.get("query") or "")
+        top_k = int(payload.get("top_k") or 6)
+        hits = self.engine.recall(query, scope, top_k=top_k)
+        return {"ok": True, "hits": [_hit_to_dict(h) for h in hits]}
+
+    def context(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        scope = _scope_from(payload)
+        query = str(payload.get("query") or "")
+        top_k = int(payload.get("top_k") or 6)
+        ctx = self.engine.build_context(query, scope, top_k=top_k)
+        return {
+            "ok": True,
+            "text": ctx.text,
+            "token_estimate": ctx.token_estimate,
+            "facts": [_hit_to_dict(h) for h in ctx.facts],
+            "echoes": [_hit_to_dict(h) for h in ctx.echoes],
+        }
+
+    def consolidate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        scope = _scope_from(payload) if payload.get("scope") else None
+        report = self._run_async(self.engine.consolidate(scope))
+        return {"ok": True, "report": report.as_dict()}
+
+    def stats(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        scope = _scope_from(payload) if payload.get("scope") else None
+        return {"ok": True, "stats": self.engine.stats(scope)}
+
+
+def _kind_of(value: Any) -> MemoryKind:
+    try:
+        return MemoryKind(str(value or "").lower())
+    except ValueError:
+        return MemoryKind.EPISODIC
+
+
+def _hit_to_dict(hit: Any) -> Dict[str, Any]:
+    mem = hit.memory
+    return {
+        "id": mem.id,
+        "content": mem.content,
+        "summary": mem.summary,
+        "kind": mem.kind.value,
+        "status": mem.status.value,
+        "tier": hit.tier,
+        "score": hit.score,
+        "relevance": hit.relevance,
+        "strength": hit.strength_eff,
+        "importance": mem.importance,
+        "recall_count": mem.recall_count,
+        "created_at": mem.created_at,
+        "scope_key": mem.scope_key,
+    }
+
+
+class MemFadeHandler(BaseHTTPRequestHandler):
+    """HTTP 入口。"""
+
+    service: MemFadeHTTPService
+    token: str = ""
+    server_version = "memfade/0.1"
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        sys.stderr.write("[memfade-http] " + (fmt % args) + "\n")
+
+    def _authorized(self) -> bool:
+        if not self.token:
+            return True
+        return self.headers.get("X-MemFade-Token", "") == self.token
+
+    def _send(self, status: int, payload: Dict[str, Any]) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json(self) -> Dict[str, Any]:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length)
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def do_GET(self) -> None:
+        if not self._authorized():
+            self._send(401, {"ok": False, "error": "unauthorized"})
+            return
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path == "/health":
+            self._send(200, {"ok": True, "service": "memfade", "version": "0.1.0"})
+            return
+        if path == "/stats":
+            payload = self._read_query_payload()
+            self._send(200, self.service.stats(payload))
+            return
+        self._send(404, {"ok": False, "error": "not found"})
+
+    def do_POST(self) -> None:
+        if not self._authorized():
+            self._send(401, {"ok": False, "error": "unauthorized"})
+            return
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        payload = self._read_json()
+        try:
+            if path == "/remember":
+                self._send(200, self.service.remember(payload))
+            elif path == "/recall":
+                self._send(200, self.service.recall(payload))
+            elif path == "/context":
+                self._send(200, self.service.context(payload))
+            elif path == "/consolidate":
+                self._send(200, self.service.consolidate(payload))
+            else:
+                self._send(404, {"ok": False, "error": "not found"})
+        except Exception as exc:
+            self._send(500, {"ok": False, "error": str(exc)})
+
+    def _read_query_payload(self) -> Dict[str, Any]:
+        """把 URL 查询参数转成 payload。"""
+
+        if "?" not in self.path:
+            return {}
+        from urllib.parse import parse_qs
+
+        query = parse_qs(self.path.split("?", 1)[1])
+        out: Dict[str, Any] = {}
+        for key, values in query.items():
+            if not values:
+                continue
+            out[key] = values[0]
+        if "scope" in out and isinstance(out["scope"], str):
+            try:
+                out["scope"] = json.loads(out["scope"])
+            except json.JSONDecodeError:
+                out["scope"] = {"chat_id": out["scope"]}
+        return out
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="memfade HTTP 侧车")
+    parser.add_argument("--db", default="memfade.db", help="SQLite 记忆库路径")
+    parser.add_argument("--host", default="127.0.0.1", help="监听地址")
+    parser.add_argument("--port", type=int, default=8787, help="监听端口")
+    parser.add_argument("--token", default="", help="鉴权令牌（X-MemFade-Token）")
+    args = parser.parse_args()
+
+    config = MemFadeConfig.from_dict({"storage": {"db_path": args.db}})
+    engine = MemoryEngine(config)
+    service = MemFadeHTTPService(engine)
+    service.start_loop()
+
+    handler = type("BoundHandler", (MemFadeHandler,), {"service": service, "token": args.token})
+    httpd = ThreadingHTTPServer((args.host, args.port), handler)
+    sys.stderr.write(
+        f"[memfade-http] 监听 http://{args.host}:{args.port}  库={os.path.abspath(args.db)}\n"
+    )
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
+        service.stop_loop()
+        engine.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+

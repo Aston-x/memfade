@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memfade"
+version = "0.1.0"
+description = "记忆淡化引擎 —— 给聊天机器人用的可移植长期记忆插件，会记得也会忘得恰到好处"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "memfade" }]
+keywords = ["memory", "chatbot", "qq", "maibot", "nonebot", "langbot", "decay", "ebbinghaus"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+]
+
+# 核心零第三方依赖。numpy 有就走矩阵运算，没有就退回纯 Python。
+dependencies = []
+
+[project.optional-dependencies]
+numpy = ["numpy>=1.24"]
+
+[project.urls]
+Homepage = "https://github.com/Aston-x/memfade"
+Repository = "https://github.com/Aston-x/memfade"
+Issues = "https://github.com/Aston-x/memfade/issues"
+
+[tool.setuptools]
+packages = ["memfade"]
+
+[tool.setuptools.package-data]
+memfade = ["py.typed"]
+
