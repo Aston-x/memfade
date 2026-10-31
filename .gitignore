@@ -10,5 +10,12 @@ venv/
 *.db
 *.db-wal
 *.db-shm
+.env
+.env.*
+
+# 跑宿主集成测试时宿主会在当前目录留下这些
+data/
+logs/
+temp/
 .DS_Store
 
