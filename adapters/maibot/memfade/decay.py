@@ -172,6 +172,13 @@ class FadePolicy:
 
     profiles: dict[MemoryKind, KindProfile] = field(default_factory=lambda: dict(DEFAULT_PROFILES))
 
+    disabled: bool = False
+    """关掉淡化：强度不衰减、档位恒为 ACTIVE。
+
+    留着这个开关是为了**消融实验**——同一套代码、只关掉淡化，
+    就能量化「淡化到底带来了什么」，而不是拿两套实现对比。
+    """
+
     recall_alpha: float = 0.35
     """被想起时的残留学习强度：新强度 = eff + α(1 - eff)。"""
 
@@ -230,6 +237,8 @@ def effective_strength(memory: Memory, now: float, policy: FadePolicy = DEFAULT_
 
     if memory.pinned:
         return 1.0
+    if policy.disabled:
+        return clamp01(memory.strength)
     # 注意不能用 `or`：时间戳 0.0 是合法值（Unix 纪元），一旦被当成「空」
     # 就会把锚点推到 now，记忆从此永不衰减。
     anchor = memory.anchor_at
@@ -263,6 +272,8 @@ def resolve_status(memory: Memory, now: float, policy: FadePolicy = DEFAULT_POLI
     if memory.status is MemoryStatus.SUPERSEDED:
         return MemoryStatus.SUPERSEDED
     if memory.pinned:
+        return MemoryStatus.ACTIVE
+    if policy.disabled:
         return MemoryStatus.ACTIVE
 
     profile = policy.profile(memory.kind)

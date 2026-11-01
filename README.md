@@ -230,6 +230,27 @@ python scripts/bench_real_data.py --db <MaiBot.db>   # 在真实聊天数据上�
 ③ 跨会话泄漏 : 0 条
 ```
 
+### 消融实验：淡化到底带来了什么
+
+`scripts/bench_decay.py` 拿 [memorylens-bench](https://github.com/Neal006/memorylens-bench)
+的同款指标，在一段脚本化对话上对比「只记不遗忘的 naive 基线」与 memfade：
+
+```
+指标                             naive       memfade
+Recall@T                         1.0           1.0     该记住的记住了吗
+老话题召回                        1.0           1.0     问起旧事还答得上吗
+Temporal Drift                   0.5           0.0   ✓ 旧值残留比例
+Contradiction                    0.5           0.0   ✓ 新旧并存比例
+平均注入条数                      5.72          5.72
+平均上下文字数                     88.9          97.3
+```
+
+**召回不掉、旧值归零**——这就是「忘得对」而不是「忘得多」。
+上下文字数略大，是因为画像常驻，换来稳定事实从不缺席。
+
+第一版跑这个实验时还揪出两个潜伏 bug：FTS5 的隐式 AND（多词查询几乎查不到），
+以及已归档的记忆**永远召不回来**（哪怕对方明确问起）。两个都已修复。
+
 ## License
 
 MIT

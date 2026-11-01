@@ -36,7 +36,7 @@ from typing import Any, Optional, Sequence
 from .config import MemFadeConfig
 from .decay import DEFAULT_POLICY, FadePolicy, effective_strength, resolve_status
 from .store import MemoryStore
-from .textutil import estimate_tokens, token_set
+from .textutil import estimate_tokens, fts_text, longest_common_substring, token_set
 from .types import Memory, MemoryStatus, RetrievalHit
 
 
@@ -111,6 +111,11 @@ class MemoryRetriever:
         if text:
             hits = self.store.search_fts(text, scope_key, limit=cfg.channel_candidates, kinds=kinds)
             collect(hits, "bm25")
+            # 「被问起就想起来」：已归档的记忆平时不出现，
+            # 但如果对方明确问到了，就把它捞回来并复活。
+            revived = self._revive_archived(text, scope_key, kinds)
+            for mid, score in revived:
+                collect([(mid, score)], "revive")
             if query_vector:
                 hits = self.store.search_vector(
                     query_vector, scope_key, limit=cfg.channel_candidates, kinds=kinds
@@ -142,6 +147,41 @@ class MemoryRetriever:
         scored.sort(key=lambda h: (h.score, h.memory.importance, h.memory.created_at), reverse=True)
         scored = self._apply_association_boost(scored, cfg.association_boost)
         return scored[:limit]
+
+    def _revive_archived(
+        self,
+        query: str,
+        scope_key: str,
+        kinds: Optional[Sequence[str]] = None,
+    ) -> list[tuple[int, float]]:
+        """把「被明确问起」的已归档记忆捞回来。"""
+
+        cfg = self.config.retrieval
+        min_common = cfg.revive_min_common
+        if min_common <= 0:
+            return []
+        candidates = self.store.search_fts(
+            query, scope_key, limit=cfg.channel_candidates, kinds=kinds, include_archived=True
+        )
+        out: list[tuple[int, float]] = []
+        for mid, _score in candidates:
+            mem = self.store.get(mid)
+            if mem is None:
+                continue
+            if mem.status is not MemoryStatus.ARCHIVED:
+                continue
+            common = longest_common_substring(query, mem.content)
+            if len(common) < min_common:
+                continue
+            # 相关度够高 = 对方确实在问这件事 → 复活
+            from .decay import MemoryEvent, apply_event
+
+            updated = apply_event(mem, MemoryEvent.RECALL, now=time.time(), policy=self.policy)
+            updated.status = MemoryStatus.ACTIVE
+            updated.anchor_at = time.time()
+            self.store.update(updated, fts_text(updated.content))
+            out.append((mid, 1.0))
+        return out
 
     # ------------------------------------------------------------------ #
     # 打分

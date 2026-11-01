@@ -434,17 +434,27 @@ class MemoryStore:
         limit: int = 40,
         kinds: Optional[Sequence[str]] = None,
         statuses: Optional[Sequence[str]] = None,
+        include_archived: bool = False,
     ) -> list[tuple[int, float]]:
         """BM25 全文检索。返回 [(memory_id, 归一化分数)]，分数越大越相关。"""
 
         if not self.has_fts or not query:
             return []
-        from .textutil import fts_text
+        from .textutil import bigrams
 
-        tokens = fts_text(query)
-        if not tokens:
+        terms = bigrams(query)
+        if not terms:
             return []
-        clauses = ["(m.scope_key=? OR m.cross_scope=1)", "m.status NOT IN ('archived','superseded')"]
+        # ⚠ 必须用 OR：FTS5 里空格分隔的多个词是**隐式 AND**，
+        # 「还记得炸鸡吗」会变成「还记 AND 记得 AND 得炸 AND 炸鸡 AND 鸡吗」，
+        # 几乎查不到任何东西。OR 之后由 BM25 按命中词数排序。
+        match_expr = " OR ".join(f'"{t}"' for t in dict.fromkeys(terms))
+        clauses = ["(m.scope_key=? OR m.cross_scope=1)"]
+        if not include_archived:
+            clauses.append("m.status NOT IN ('archived','superseded')")
+        else:
+            # 只把「已归档」捞回来；被取代的（矛盾事实）永远不回来。
+            clauses.append("m.status IN ('archived','gisted','fading','active')")
         params: list[Any] = [scope_key]
         if kinds:
             clauses.append("m.kind IN (" + ",".join("?" * len(kinds)) + ")")
@@ -463,7 +473,7 @@ class MemoryStore:
                     WHERE memories_fts MATCH ? AND {' AND '.join(clauses)}
                     ORDER BY rank LIMIT ?
                     """,
-                    [tokens, *params],
+                    [match_expr, *params],
                 ).fetchall()
         except sqlite3.OperationalError:
             return []

@@ -178,3 +178,34 @@ def join_tokens(tokens: Iterable[str]) -> str:
 
     return " ".join(t for t in tokens if t)
 
+
+def longest_common_substring(a: str, b: str) -> str:
+    """两个字符串的最长公共子串（字符级）。
+
+    用来判断「对方是不是明确提到了这件事」：
+    「还记得炸鸡吗」和「许杏玖喜欢吃炸鸡」的公共子串是「炸鸡」（2 字），
+    而「今天吃了吗」和「昨天吃了炸鸡」只有「吃了」——同样 2 字，
+    但前者的语义指向明确得多，所以阈值定在 2 字而不是更长。
+    """
+
+    s1 = normalize(a)
+    s2 = normalize(b)
+    if not s1 or not s2:
+        return ""
+    if len(s1) > len(s2):
+        s1, s2 = s2, s1
+    previous = [0] * (len(s1) + 1)
+    best = 0
+    best_end = 0
+    for i in range(1, len(s2) + 1):
+        current = [0] * (len(s1) + 1)
+        ch = s2[i - 1]
+        for j in range(1, len(s1) + 1):
+            if s1[j - 1] == ch:
+                current[j] = previous[j - 1] + 1
+                if current[j] > best:
+                    best = current[j]
+                    best_end = i
+        previous = current
+    return s2[best_end - best : best_end]
+

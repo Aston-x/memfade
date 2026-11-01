@@ -31,6 +31,26 @@ class TestRetrieval(unittest.TestCase):
         hits = self.engine.recall("炸鸡", SCOPE)
         self.assertEqual(len(hits), 1, "中文二元组检索应命中")
 
+    def test_multi_word_query_uses_or_semantics(self):
+        """多词查询必须是 OR，不是 AND。
+
+        FTS5 里空格分隔的多个词是隐式 AND，
+        「还记得炸鸡吗」会要求记忆同时含全部五个二元组——几乎查不到东西。
+        """
+
+        draft = MemoryDraft(content="许杏玖和季怡一起去吃了炸鸡", kind=MemoryKind.EPISODIC, importance=0.5)
+        self.engine.remember(draft, SCOPE)
+        hits = self.engine.recall("还记得炸鸡吗", SCOPE)
+        self.assertEqual(len(hits), 1, "多词查询应能命中只含部分词的记忆")
+
+    def test_more_matching_words_rank_higher(self):
+        strong = MemoryDraft(content="炸鸡和年糕都点了", kind=MemoryKind.EPISODIC, importance=0.5)
+        weak = MemoryDraft(content="出门买了瓶水顺便看了一眼炸鸡店", kind=MemoryKind.EPISODIC, importance=0.5)
+        self.engine.remember(strong, SCOPE)
+        self.engine.remember(weak, SCOPE)
+        hits = self.engine.recall("炸鸡", SCOPE)
+        self.assertEqual(hits[0].memory.content, strong.content, "命中更多词应排前面")
+
     def test_punctuation_does_not_break_match(self):
         draft = MemoryDraft(content="她很讨厌别人迟到。", kind=MemoryKind.PREFERENCE, importance=0.7)
         self.engine.remember(draft, SCOPE)
@@ -126,8 +146,27 @@ class TestRetrieval(unittest.TestCase):
         draft = MemoryDraft(content="会被归档的记忆", kind=MemoryKind.EPISODIC, importance=0.5)
         mem = self.engine.remember(draft, SCOPE)
         self.engine.forget(mem.id)
-        hits = self.engine.recall("归档", SCOPE)
+        hits = self.engine.recall("今天天气怎么样", SCOPE)
         self.assertEqual(hits, [])
+
+    async def test_archived_memory_revives_when_asked(self):
+        """被明确问起时，已归档的记忆应该能被想起来。"""
+
+        draft = MemoryDraft(content="许杏玖喜欢吃炸鸡", kind=MemoryKind.EPISODIC, importance=0.5)
+        mem = self.engine.remember(draft, SCOPE)
+        self.engine.forget(mem.id)
+        self.assertEqual(self.engine.recall("炸鸡", SCOPE), [], "平时不该出现")
+        hits = self.engine.recall("还记得炸鸡吗", SCOPE)
+        self.assertEqual(len(hits), 1, "被问起时应该能想起来")
+        revived = self.engine.store.get(mem.id)
+        self.assertEqual(revived.status, MemoryStatus.ACTIVE)
+
+    async def test_archived_memory_stays_hidden_when_not_asked(self):
+        draft = MemoryDraft(content="许杏玖喜欢吃炸鸡", kind=MemoryKind.EPISODIC, importance=0.5)
+        mem = self.engine.remember(draft, SCOPE)
+        self.engine.forget(mem.id)
+        hits = self.engine.recall("今天天气怎么样", SCOPE)
+        self.assertEqual(hits, [], "没问到就不该复活")
 
     def test_near_duplicate_is_not_written_twice(self):
         first = self.engine.remember(

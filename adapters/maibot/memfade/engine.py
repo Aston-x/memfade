@@ -41,7 +41,7 @@ class MemoryEngine:
         policy: Optional[FadePolicy] = None,
     ) -> None:
         self.config = config or MemFadeConfig()
-        self.policy = policy or DEFAULT_POLICY
+        self.policy = policy or self._build_policy()
         path = db_path or self.config.storage.db_path
         self.store = MemoryStore(
             path,
@@ -54,6 +54,18 @@ class MemoryEngine:
         self.retriever = MemoryRetriever(self.store, self.config, self.policy)
         self._embed_one = make_embedder(embedder) if self.config.storage.enable_vector else None
         self.consolidator = ConsolidationService(self.store, self.config, self.policy, self.extractor)
+
+    def _build_policy(self) -> FadePolicy:
+        """按配置构造淡化策略。"""
+
+        base = DEFAULT_POLICY
+        return FadePolicy(
+            profiles=dict(base.profiles),
+            disabled=not self.config.fade.enabled,
+            recall_alpha=self.config.fade.recall_alpha,
+            reinforce_alpha=self.config.fade.reinforce_alpha,
+            weaken_alpha=self.config.fade.weaken_alpha,
+        )
 
     def close(self) -> None:
         self.store.close()
