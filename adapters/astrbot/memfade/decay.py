@@ -109,7 +109,7 @@ DEFAULT_PROFILES: dict[MemoryKind, KindProfile] = {
         stability_growth=1.6,
         stability_ceiling=8.0,
         fade_enter=0.55,
-        fade_exit=0.35,
+        fade_exit=0.50,
         gist_threshold=0.15,
         archive_threshold=0.04,
     ),
@@ -119,7 +119,7 @@ DEFAULT_PROFILES: dict[MemoryKind, KindProfile] = {
         stability_growth=1.8,
         stability_ceiling=12.0,
         fade_enter=0.50,
-        fade_exit=0.32,
+        fade_exit=0.45,
         gist_threshold=0.12,
         archive_threshold=0.03,
     ),
@@ -129,7 +129,7 @@ DEFAULT_PROFILES: dict[MemoryKind, KindProfile] = {
         stability_growth=1.7,
         stability_ceiling=10.0,
         fade_enter=0.52,
-        fade_exit=0.33,
+        fade_exit=0.47,
         gist_threshold=0.13,
         archive_threshold=0.03,
     ),
@@ -139,7 +139,7 @@ DEFAULT_PROFILES: dict[MemoryKind, KindProfile] = {
         stability_growth=1.6,
         stability_ceiling=9.0,
         fade_enter=0.52,
-        fade_exit=0.33,
+        fade_exit=0.47,
         gist_threshold=0.14,
         archive_threshold=0.04,
     ),
@@ -149,7 +149,7 @@ DEFAULT_PROFILES: dict[MemoryKind, KindProfile] = {
         stability_growth=1.7,
         stability_ceiling=10.0,
         fade_enter=0.52,
-        fade_exit=0.33,
+        fade_exit=0.47,
         gist_threshold=0.13,
         archive_threshold=0.03,
     ),
@@ -159,7 +159,7 @@ DEFAULT_PROFILES: dict[MemoryKind, KindProfile] = {
         stability_growth=1.2,
         stability_ceiling=3.0,
         fade_enter=0.30,
-        fade_exit=0.20,
+        fade_exit=0.26,
         gist_threshold=0.08,
         archive_threshold=0.02,
     ),
@@ -265,7 +265,12 @@ def resolve_status(memory: Memory, now: float, policy: FadePolicy = DEFAULT_POLI
     * 迟滞是标准的施密特触发器：跌破 ``fade_exit`` 才降级，
       升过 ``fade_enter`` 才恢复，两条线之间那段是「粘住」的，
       记忆停在原档不动。没有这一段的话，整理任务每跑一次，
-      记忆就会在 ACTIVE 与 FADING 之间来回抖；
+      记忆就会在 ACTIVE 与 FADING 之间来回抖。
+
+      ⚠ 迟滞带**必须窄**。带太宽会出这样的事：
+      一条事实的保留率已经掉到 41%，却因为还在带内而保持 ACTIVE，
+      于是被当成「现在仍然成立的事实」注入——这比它直接淡出更糟。
+      所以 fade_exit 只比 fade_enter 低 0.05 左右；
     * ARCHIVED 是单向门，除非有效强度明显回升，否则不再自动复活。
     """
 
@@ -336,6 +341,9 @@ def apply_event(
     if event is MemoryEvent.RECALL:
         alpha = min(1.0, max(0.0, policy.recall_alpha * max(0.0, strength_delta)))
         updated.strength = clamp01(eff + alpha * (1.0 - eff))
+        # 「被问起」就等于「它还在」——刚想起的记忆如果因为强度不够
+        # 又被判成 FADING，就会出现「刚想起就变陈旧」的荒唐结果。
+        updated.strength = max(updated.strength, policy.profile(memory.kind).fade_enter)
         updated.anchor_at = float(now)
         updated.last_recalled_at = float(now)
         updated.recall_count = int(memory.recall_count) + 1
@@ -345,6 +353,7 @@ def apply_event(
     elif event is MemoryEvent.REINFORCE:
         alpha = min(1.0, max(0.0, policy.reinforce_alpha * max(0.0, strength_delta)))
         updated.strength = clamp01(eff + alpha * (1.0 - eff))
+        updated.strength = max(updated.strength, policy.profile(memory.kind).fade_enter)
         updated.anchor_at = float(now)
         updated.last_recalled_at = float(now)
         updated.recall_count = int(memory.recall_count) + 1

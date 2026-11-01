@@ -173,6 +173,27 @@ class TestFadeGradient(unittest.TestCase):
         mem.status = MemoryStatus.ARCHIVED
         self.assertEqual(resolve_status(mem, 400 * DAY), MemoryStatus.ARCHIVED)
 
+    def test_hysteresis_band_is_narrow(self):
+        """保留率掉到 41% 的事实，不该还被当成「现行事实」。
+
+        迟滞带太宽时，事实会卡在 ACTIVE 档直到保留率跌破 fade_exit——
+        那时它已经被当成现在仍然成立的真相注入了，比直接淡出更糟。
+        """
+
+        mem = make_memory(kind=MemoryKind.SEMANTIC, importance=0.65, anchor_at=0.0)
+        eff = effective_strength(mem, 200 * DAY)
+        self.assertLess(eff, 0.5, "这个场景下保留率应该已经明显下降")
+        self.assertEqual(resolve_status(mem, 200 * DAY), MemoryStatus.FADING)
+
+    def test_recall_restores_to_active(self):
+        """刚被想起的记忆不能又变成陈旧。"""
+
+        mem = make_memory(kind=MemoryKind.EPISODIC, importance=0.4, anchor_at=0.0)
+        mem.status = MemoryStatus.FADING
+        updated = apply_event(mem, MemoryEvent.RECALL, now=30 * DAY)
+        self.assertEqual(updated.status, MemoryStatus.ACTIVE)
+        self.assertGreaterEqual(updated.strength, 0.5, "回忆后强度应至少回到活跃线")
+
 
 class TestScheduling(unittest.TestCase):
     def test_next_review_days(self):

@@ -217,3 +217,22 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(b)
         report = await self.engine.consolidate(SCOPE)
         self.assertEqual(report.superseded, 0, "不同的事不该被判成矛盾")
+
+    async def test_status_change_counter_works(self):
+        """「有多少条换了档位」这个计数必须是准的。
+
+        之前 `updated = mem` 是同一个对象，改完 status 再比较必然相等，
+        计数恒为 0——看起来一切正常，实际什么变化都看不出来。
+        """
+
+        mem = self.engine.remember(
+            MemoryDraft(content="许杏玖喜欢辣的东西", kind=MemoryKind.SEMANTIC, importance=0.65), SCOPE
+        )
+        self.assertIsNotNone(mem)
+        old = time.time() - 200 * 86400.0
+        mem.anchor_at = old
+        mem.created_at = old
+        self.engine.store.update(mem)
+        report = await self.engine.consolidate(SCOPE)
+        self.assertGreaterEqual(report.status_changed, 1, "换档的条数应该被统计到")
+        self.assertEqual(self.engine.store.get(mem.id).status, MemoryStatus.FADING)

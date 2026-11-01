@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from .config import MemFadeConfig
@@ -122,9 +122,10 @@ class ConsolidationService:
             if status is mem.status and abs(eff - mem.strength) < 1e-9:
                 continue
             decayed += 1
-            updated = mem
-            updated.status = status
-            updated.updated_at = now
+            # ⚠ 必须**复制**再改：`updated = mem` 是同一个对象，
+            # 改完 status 再拿 mem.status 比较，结果永远相等——
+            # 「有多少条换了档位」这个计数会恒为 0，看不出任何变化。
+            updated = replace(mem, status=status, updated_at=now)
             summary = mem.summary
             if status is MemoryStatus.GISTED and not summary:
                 summary = await self._make_gist(mem)
