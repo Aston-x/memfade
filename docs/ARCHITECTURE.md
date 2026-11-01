@@ -122,5 +122,28 @@ WHERE (scope_key = ? OR cross_scope = 1)
 （规划器）与 `maisaka.replyer.before_model_request`（回复器）：
 两次模型请求各注入各的，互不干扰，而且都有现成的 `session_id` 可当作用域键。
 
+## 各适配器的注入点
+
+| 适配器 | 注入点 | 作用域键 |
+|---|---|---|
+| MaiBot | 规划器改 `items`；回复器追加 `extra_prompt` | `session_id` |
+| LangBot | `event.default_prompt.append(Message(role="system"))` | `session_name` |
+| AstrBot | 改写 `request.system_prompt` | 群号 / 用户号 |
+| NoneBot2 | 无统一钩子 → 提供 `build_context(event)` 助手 API | `get_session_id()` |
+| Koishi | 无统一钩子 → HTTP 侧车返回现成文本 | 群号 / 用户号 |
+
+## 验证程度
+
+不吹牛，逐个说清楚每个适配器被验证到哪一步：
+
+| 适配器 | 验证方式 |
+|---|---|
+| MaiBot | 实机部署在许杏玖上；宿主自己的反序列化器验证注入的 item |
+| LangBot | 真的 `langbot-plugin` SDK，5 项测试跑在真 SDK 上 |
+| AstrBot | 真的 AstrBot SDK 源码，ast 静态核对 API 面 + 桩件测逻辑 |
+| Koishi | 真的 koishi@4.18，`tsc` 类型检查 + 行为测试（起真的 Python 侧车） |
+| NoneBot2 | 真的 nonebot2，4 项测试跑在真 SDK 上 |
+
+
 
 
