@@ -186,43 +186,56 @@ def canonicalize_via_host(
         out: List[Dict[str, Any]] = []
         for start in range(0, len(texts), chunk_size):
             chunk = texts[start : start + chunk_size]
-            prompt = CANONICALIZE_PROMPT.format(facts="\n".join(f"- {t}" for t in chunk))
-            request = llm_service.LLMServiceRequest(
-                task_name="memory",
-                request_type="memfade.canonicalize",
-                prompt=prompt,
-                temperature=0.1,
-                # MiniMax 这类模型默认开着 thinking，会把预算全烧在思考上：
-                # max_tokens 太小 -> finish_reason=length、输出为空；
-                # 太大 -> 超过宿主的 120 秒超时。
-                # 实测 4 条一批 + 8000 token 最稳。
-                max_tokens=8000,
+            out.extend(await _run_chunk(chunk))
+        return out
+
+    async def _run_chunk(chunk: List[str]) -> List[Dict[str, Any]]:
+        try:
+            return await _one_batch(chunk)
+        except Exception as exc:
+            # 失败就**拆成两半**再试：模型在长输入下容易思考超时。
+            if len(chunk) > 1:
+                mid = len(chunk) // 2
+                return (await _run_chunk(chunk[:mid])) + (await _run_chunk(chunk[mid:]))
+            print(f"  ! 规范化失败（{len(chunk)} 条）：{exc}")
+            return [{"content": t, "subject": "", "predicate": "", "object": ""} for t in chunk]
+
+    async def _one_batch(chunk: List[str]) -> List[Dict[str, Any]]:
+        prompt = CANONICALIZE_PROMPT.format(facts="\n".join(f"- {t}" for t in chunk))
+        request = llm_service.LLMServiceRequest(
+            task_name="memory",
+            request_type="memfade.canonicalize",
+            prompt=prompt,
+            temperature=0.1,
+            # MiniMax 这类模型默认开着 thinking，会把预算全烧在思考上：
+            # max_tokens 太小 -> finish_reason=length、输出为空；
+            # 太大 -> 超过宿主的 120 秒超时。
+            # 实测 4 条一批 + 8000 token 最稳。
+            max_tokens=8000,
+        )
+        result = await llm_service.generate(request)
+        payload = result.to_capability_payload()
+        raw = str(payload.get("response") or "")
+        items = parse_json_block(raw)
+        if not isinstance(items, list) or not items:
+            raise RuntimeError("模型没有返回可解析的 JSON")
+        out = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            out.append(
+                {
+                    "content": content,
+                    "subject": str(item.get("subject") or "").strip(),
+                    "predicate": str(item.get("predicate") or "").strip(),
+                    "object": str(item.get("object") or "").strip(),
+                }
             )
-            try:
-                result = await llm_service.generate(request)
-                payload = result.to_capability_payload()
-                raw = str(payload.get("response") or "")
-                items = parse_json_block(raw)
-                if not isinstance(items, list) or not items:
-                    raise RuntimeError("模型没有返回可解析的 JSON")
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    content = str(item.get("content") or "").strip()
-                    if not content:
-                        continue
-                    out.append(
-                        {
-                            "content": content,
-                            "subject": str(item.get("subject") or "").strip(),
-                            "predicate": str(item.get("predicate") or "").strip(),
-                            "object": str(item.get("object") or "").strip(),
-                        }
-                    )
-            except Exception as exc:
-                print(f"  ! 规范化第 {start // chunk_size + 1} 批失败：{exc}")
-                for text in chunk:
-                    out.append({"content": text, "subject": "", "predicate": "", "object": ""})
+        if not out:
+            raise RuntimeError("模型返回了空结果")
         return out
 
     return asyncio.run(_run())

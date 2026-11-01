@@ -218,6 +218,40 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
         report = await self.engine.consolidate(SCOPE)
         self.assertEqual(report.superseded, 0, "不同的事不该被判成矛盾")
 
+    async def test_preference_change_supersedes_old(self):
+        """偏好变了（「喜欢吃辣」→「现在不吃辣」）旧事实要让位。
+
+        这两条的 subject/predicate 未必填得一致（三元组靠模型自觉），
+        所以还有一层内容兜底：去掉否定词后高度相似 + 否定状态相反。
+        """
+
+        old = self.engine.remember(
+            MemoryDraft(content="许杏玖喜欢吃辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8),
+            SCOPE,
+        )
+        new = self.engine.remember(
+            MemoryDraft(content="许杏玖现在不吃辣的食物了", kind=MemoryKind.PREFERENCE, importance=0.8),
+            SCOPE,
+        )
+        self.assertIsNotNone(old)
+        self.assertIsNotNone(new)
+        report = await self.engine.consolidate(SCOPE)
+        self.assertGreaterEqual(report.superseded, 1, "旧偏好该退场")
+
+    async def test_compatible_preferences_are_not_conflicts(self):
+        """「不喜欢辣」与「喜欢麻辣烫」并不矛盾，别误判。"""
+
+        a = self.engine.remember(
+            MemoryDraft(content="许杏玖不喜欢辣", kind=MemoryKind.PREFERENCE, importance=0.8), SCOPE
+        )
+        b = self.engine.remember(
+            MemoryDraft(content="许杏玖喜欢麻辣烫", kind=MemoryKind.PREFERENCE, importance=0.8), SCOPE
+        )
+        self.assertIsNotNone(a)
+        self.assertIsNotNone(b)
+        report = await self.engine.consolidate(SCOPE)
+        self.assertEqual(report.superseded, 0, "两条偏好并不矛盾")
+
     async def test_status_change_counter_works(self):
         """「有多少条换了档位」这个计数必须是准的。
 

@@ -20,6 +20,10 @@
         "why_result": {
           "api": "memfade_why_result",
           "version": "1"
+        },
+        "quality": {
+          "api": "memfade_quality",
+          "version": "1"
         }
       },
       "actions": {
@@ -233,6 +237,44 @@
                   "label": "距今天数"
                 }
               ]
+            }
+          ]
+        },
+        {
+          "type": "card",
+          "label": "记忆库体检",
+          "children": [
+            {
+              "type": "stat",
+              "label": "记忆条数",
+              "value": {
+                "source": "quality",
+                "field": "report.total"
+              }
+            },
+            {
+              "type": "stat",
+              "label": "长度中位数",
+              "value": {
+                "source": "quality",
+                "field": "report.length_median"
+              }
+            },
+            {
+              "type": "stat",
+              "label": "缺三元组",
+              "value": {
+                "source": "quality",
+                "field": "report.missing_spo"
+              }
+            },
+            {
+              "type": "stat",
+              "label": "近似重复对",
+              "value": {
+                "source": "quality",
+                "field": "report.near_duplicate_pairs"
+              }
             }
           ]
         },

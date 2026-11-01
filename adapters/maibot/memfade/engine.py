@@ -313,6 +313,20 @@ class MemoryEngine:
 
         return self.retriever.explain(query, scope.key(), now=now, top_k=top_k)
 
+    def diagnose(self, scope: Optional[Scope] = None) -> dict:
+        """记忆库体检。"""
+
+        from .diagnostics import analyze
+
+        return analyze(self.store, scope.key() if scope else None)
+
+    def export(self, scope: Optional[Scope] = None) -> list:
+        """导出记忆（JSON 友好）。"""
+
+        from .diagnostics import export_memories
+
+        return export_memories(self.store, scope.key() if scope else None)
+
     def reinforce(self, memory_ids: Iterable[int], *, now: Optional[float] = None) -> int:
         """强化一批记忆。带冷却期，避免正反馈刷分。"""
 

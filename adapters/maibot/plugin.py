@@ -1208,6 +1208,31 @@ class MemFadePlugin(MaiBotPlugin):
 
         return {"results": getattr(self, "_last_explain", [])}
 
+    @API("memfade_quality", description="记忆库体检：长度、分句、三元组覆盖、重复", version="1")
+    async def memfade_quality(self) -> Dict[str, Any]:
+        """记忆库健康度。"""
+
+        engine = self._engine
+        if engine is None:
+            return {"ok": False, "error": "引擎未就绪"}
+        try:
+            return {"ok": True, "report": engine.diagnose()}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @API("memfade_export", description="导出记忆（JSON）", version="1")
+    async def memfade_export(self, limit: int = 5000) -> Dict[str, Any]:
+        """导出记忆，方便备份或迁移到别的系统。"""
+
+        engine = self._engine
+        if engine is None:
+            return {"ok": False, "error": "引擎未就绪"}
+        try:
+            rows = engine.export()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "count": len(rows), "memories": rows[: max(1, min(20000, int(limit)))]}
+
     def _busiest_scope_id(self, engine) -> str:
         """找记忆最多的那个会话——面板默认看它。"""
 

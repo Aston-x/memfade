@@ -185,6 +185,51 @@ def _same_fact_different_tail(a: str, b: str) -> bool:
     return tail_a != tail_b
 
 
+_NEGATIONS = ("不再", "不能", "不会", "不", "没", "无", "非", "别", "未")
+_TIME_FILLERS = ("目前", "当前", "现在", "已经", "曾经", "以后", "之后", "最近", "今天", "明天")
+
+
+def _strip_negations(text: str) -> str:
+    """去掉否定词与时间性填充词。"""
+
+    out = text or ""
+    for word in _TIME_FILLERS:
+        out = out.replace(word, "")
+    for word in _NEGATIONS:
+        out = out.replace(word, "")
+    return out
+
+
+def _has_negation(text: str) -> bool:
+    """判断一句话里有没有否定。"""
+
+    return any(word in (text or "") for word in _NEGATIONS)
+
+
+def _polarity_conflict(a: str, b: str) -> bool:
+    """同一件事，一边否定一边肯定 → 矛盾。
+
+    最常见的「事实变了」：之前说「喜欢吃辣」，后来改口「现在不吃辣」。
+    这两条的 subject/predicate 未必填得一致（三元组靠模型自觉），
+    所以还得有一层**内容层面**的兜底：
+
+    去掉否定词之后高度相似、且两边否定状态相反 → 认为是同一件事的两个版本。
+    """
+
+    from .textutil import similarity
+
+    if _has_negation(a) == _has_negation(b):
+        return False
+    stripped_a = _strip_negations(a)
+    stripped_b = _strip_negations(b)
+    if not stripped_a or not stripped_b:
+        return False
+    # 0.68 是标定出来的：
+    # 「喜欢吃辣的食物」vs「现在不吃辣的食物了」→ 0.71（判矛盾 ✓）
+    # 「不喜欢辣」vs「喜欢麻辣烫」→ 0.57（不判矛盾 ✓，两者其实兼容）
+    return similarity(stripped_a, stripped_b) >= 0.68
+
+
 class MemoryStore:
     """记忆存储。线程安全（内部一把写锁）。"""
 
@@ -672,7 +717,9 @@ class MemoryStore:
                     continue
                 if a.subject and a.predicate:
                     continue  # 已经有结构化字段，走结构化那条路
-                if _same_fact_different_tail(a.content, b.content):
+                if _same_fact_different_tail(a.content, b.content) or _polarity_conflict(
+                    a.content, b.content
+                ):
                     pairs.append((a, b))
                     seen.add(key)
         return pairs

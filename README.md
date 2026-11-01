@@ -222,6 +222,18 @@ ctx = engine.build_context("今天吃什么", scope)
 print(ctx.text)
 ```
 
+### 命令行工具
+
+```bash
+python scripts/memfade_cli.py --db memfade.db health              # 记忆库体检
+python scripts/memfade_cli.py --db memfade.db search --query 显卡  # 检索并解释召回
+python scripts/memfade_cli.py --db memfade.db export --out m.json  # 导出（可移植、可审计）
+python scripts/memfade_cli.py --db memfade.db fade                # 跑一轮整理
+```
+
+体检会指出：记忆太长（注入时会被截断）、一条塞了多件事、缺三元组
+（矛盾检测抓不到）、还有多少近似重复。
+
 ### 从旧的记忆库迁移
 
 已经有一套记忆系统（比如 A_Memorix）？可以把它的事实**洗干净**再带过来：
