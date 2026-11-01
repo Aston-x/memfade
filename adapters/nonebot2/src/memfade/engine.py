@@ -74,6 +74,51 @@ class MemoryEngine:
     # 写入
     # ------------------------------------------------------------------ #
 
+    def remember_atomic(
+        self,
+        draft: MemoryDraft,
+        scope: Scope,
+        *,
+        now: Optional[float] = None,
+        meta: Optional[dict] = None,
+    ) -> list[Memory]:
+        """写入一条记忆，但**按「一件事一条」拆开**。
+
+        为什么要拆：一段 200 字的话塞进记忆库，注入时只能截断
+        （断在半句里），矛盾检测也抓不住（缺三元组），
+        体检还会一直报警。拆成几条短的才是一颗干净的子弹。
+
+        三元组只挂在**第一条**上——那一条是「主语 + 第一件事」，
+        后面的碎片脱离了这个三元组，挂了反而是错的。
+
+        返回实际写入的记忆（重复的会被去重掉，不在里面）。
+        """
+
+        from .textutil import split_atomic
+
+        content = (draft.content or "").strip()
+        if not content:
+            return []
+        limit = int(self.config.extraction.max_chars)
+        pieces = split_atomic(content, max_chars=limit) if len(content) > limit else [content]
+        out: list[Memory] = []
+        for index, piece in enumerate(pieces):
+            piece_draft = MemoryDraft(
+                content=piece,
+                kind=draft.kind,
+                importance=draft.importance,
+                subject=draft.subject if index == 0 else "",
+                predicate=draft.predicate if index == 0 else "",
+                object=draft.object if index == 0 else "",
+                source=draft.source,
+                cross_scope=draft.cross_scope,
+                meta=draft.meta,
+            )
+            memory = self.remember(piece_draft, scope, now=now, meta=meta)
+            if memory is not None:
+                out.append(memory)
+        return out
+
     def remember(
         self,
         draft: MemoryDraft,

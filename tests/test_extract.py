@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import unittest
 
 from memfade.extract import MemoryExtractor
-from memfade.types import MemoryKind
+from memfade.types import MemoryDraft, MemoryKind, Scope
+from tests.helpers import temp_engine
 
 
 class FakeLLM:
@@ -82,6 +84,28 @@ class TestLLMExtraction(unittest.IsolatedAsyncioTestCase):
         result = await extractor.extract([{"role": "user", "content": "x"}])
         self.assertEqual(result.drafts, [], "敏感信息不进记忆库")
 
+    async def test_long_fact_is_split_into_atomic_memories(self):
+        """模型甩回来一整段时，拆成「一件事一条」。
+
+        提示词说了「30 字以内」不算数——超长记忆塞进库里，
+        注入时只能截断（断在半句里），矛盾检测也抓不住。
+        """
+
+        reply = (
+            '[{"content":"季怡在做小红书账号，发AI绘画内容，目标是靠流量和接单赚钱，'
+            '10月起零关注零粉丝，只有几个赞，曾被卖家临时加价拉黑二十块",'
+            '"kind":"semantic","importance":0.8,'
+            '"subject":"季怡","predicate":"运营","object":"小红书账号"}]'
+        )
+        extractor = MemoryExtractor(llm=FakeLLM(reply))
+        result = await extractor.extract([{"role": "user", "content": "x"}])
+        self.assertGreater(len(result.drafts), 1, "长事实应该被拆开")
+        for draft in result.drafts:
+            self.assertLessEqual(len(draft.content), 40)
+        # 三元组只挂第一条
+        self.assertEqual(result.drafts[0].subject, "季怡")
+        self.assertEqual(result.drafts[1].subject, "")
+
     async def test_falls_back_to_rules_on_error(self):
         extractor = MemoryExtractor(llm=FakeLLM(raises=True))
         result = await extractor.extract([{"role": "user", "content": "我叫许杏玖"}])
@@ -95,6 +119,46 @@ class TestLLMExtraction(unittest.IsolatedAsyncioTestCase):
         extractor.config.promote_cross_scope = False
         result = await extractor.extract([{"role": "user", "content": "x"}])
         self.assertFalse(result.drafts[0].cross_scope)
+
+
+class TestAtomicWrite(unittest.TestCase):
+    """引擎级的「一件事一条」写入。"""
+
+    def setUp(self):
+        self.engine, self.path, self.config = temp_engine()
+        self.scope = Scope(platform="qq", chat_type="private", chat_id="1")
+
+    def tearDown(self):
+        self.engine.close()
+        for suffix in ("", "-wal", "-shm"):
+            path = self.path + suffix
+            if os.path.exists(path):
+                os.remove(path)
+
+    def test_long_content_is_split(self):
+        draft = MemoryDraft(
+            content="季怡在做小红书账号，发AI绘画内容，目标是靠流量和接单赚钱，"
+            "10月起零关注零粉丝，只有几个赞，曾被卖家临时加价拉黑二十块",
+            kind=MemoryKind.SEMANTIC,
+            importance=0.9,
+            subject="季怡",
+            predicate="运营",
+            object="小红书账号",
+        )
+        written = self.engine.remember_atomic(draft, self.scope)
+        self.assertGreater(len(written), 1)
+        for memory in written:
+            self.assertLessEqual(len(memory.content), 40)
+        # 三元组只挂第一条
+        self.assertEqual(written[0].subject, "季怡")
+        self.assertEqual(written[1].subject, "")
+
+    def test_short_content_is_one_memory(self):
+        draft = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9)
+        written = self.engine.remember_atomic(draft, self.scope)
+        self.assertEqual(len(written), 1)
+        self.assertEqual(written[0].content, "许杏玖喜欢辣的食物")
+        self.assertEqual(written[0].subject, "")
 
 
 class TestGist(unittest.IsolatedAsyncioTestCase):

@@ -43,10 +43,8 @@ if _HERE not in sys.path:
 
 try:  # pragma: no cover - 取决于部署形态
     from memfade import MemoryDraft, MemoryEngine, MemoryKind, MemFadeConfig, Scope
-    from memfade.textutil import split_atomic
 except ImportError:  # pragma: no cover
     from memfade import MemoryDraft, MemoryEngine, MemoryKind, MemFadeConfig, Scope
-    from memfade.textutil import split_atomic
 
 
 PLUGIN_ID = "memfade.memory"
@@ -831,19 +829,14 @@ class MemFadePlugin(MaiBotPlugin):
         scope = self._scope_from_kwargs(kwargs)
         # 一段话塞进一条记忆，等于一颗炸弹：注入时只能截断，
         # 矛盾检测也抓不住。按标点拆成「一件事一条」再记。
-        pieces = split_atomic(content, max_chars=40)
-        written: List[str] = []
-        for piece in pieces:
-            draft = MemoryDraft(
-                content=piece,
-                kind=MemoryKind.SEMANTIC,
-                importance=0.95,
-                cross_scope=bool(self.config.memory.cross_session),
-                source="command",
-            )
-            memory = engine.remember(draft, scope)
-            if memory is not None:
-                written.append(memory.content)
+        draft = MemoryDraft(
+            content=content,
+            kind=MemoryKind.SEMANTIC,
+            importance=0.95,
+            cross_scope=bool(self.config.memory.cross_session),
+            source="command",
+        )
+        written = [m.content for m in engine.remember_atomic(draft, scope)]
         if not written:
             return False, "没记下来（可能被判定为不重要或重复）", 1
         if len(written) == 1:
@@ -934,10 +927,16 @@ class MemFadePlugin(MaiBotPlugin):
             cross_scope=bool(self.config.memory.cross_session),
             source="tool",
         )
-        memory = engine.remember(draft, scope)
-        if memory is None:
+        written = engine.remember_atomic(draft, scope)
+        if not written:
             return {"name": "remember_something", "content": "没记下来（内容不重要或与已有记忆重复）"}
-        return {"name": "remember_something", "content": f"记住了：{memory.content}"}
+        if len(written) == 1:
+            return {"name": "remember_something", "content": f"记住了：{written[0].content}"}
+        return {
+            "name": "remember_something",
+            "content": "记住了这 %d 件事：%s"
+            % (len(written), "；".join(m.content for m in written)),
+        }
 
     # ------------------------------------------------------------------ #
     # WebUI / API

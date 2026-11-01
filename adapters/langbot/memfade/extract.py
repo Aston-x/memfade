@@ -25,6 +25,7 @@ from typing import Any, Optional, Sequence
 
 from .config import ExtractionConfig
 from .llm import LLMClient, parse_json_block
+from .textutil import split_atomic
 from .types import MemoryDraft, MemoryKind
 
 
@@ -360,18 +361,30 @@ class MemoryExtractor:
             kind = _KIND_ALIASES.get(str(item.get("kind") or "").lower(), MemoryKind.EPISODIC)
             importance = _clamp_importance(kind, _clamp_float(item.get("importance"), 0.5))
             cross = bool(item.get("cross_scope")) and self.config.promote_cross_scope
-            drafts.append(
-                MemoryDraft(
-                    content=content,
-                    kind=kind,
-                    importance=importance,
-                    subject=str(item.get("subject") or "").strip(),
-                    predicate=str(item.get("predicate") or "").strip(),
-                    object=str(item.get("object") or "").strip(),
-                    source=str(item.get("source") or "").strip(),
-                    cross_scope=cross,
+            subject = str(item.get("subject") or "").strip()
+            predicate = str(item.get("predicate") or "").strip()
+            object_value = str(item.get("object") or "").strip()
+            source = str(item.get("source") or "").strip()
+            # ⚠ 提示词说了「30 字以内」不算数——模型偶尔会甩一整段回来。
+            # 超长的按标点拆开，一条变成几条，别让长记忆进库。
+            pieces = split_atomic(content, max_chars=self.config.max_chars)
+            if len(pieces) <= 1:
+                pieces = [content]
+            for index, piece in enumerate(pieces):
+                drafts.append(
+                    MemoryDraft(
+                        content=piece,
+                        kind=kind,
+                        importance=importance,
+                        # 三元组只挂第一条：它是「主语 + 第一件事」，
+                        # 后面的碎片脱离了这个三元组。
+                        subject=subject if index == 0 else "",
+                        predicate=predicate if index == 0 else "",
+                        object=object_value if index == 0 else "",
+                        source=source,
+                        cross_scope=cross,
+                    )
                 )
-            )
         drafts.sort(key=lambda d: d.importance, reverse=True)
         return drafts[: self.config.max_per_batch]
 

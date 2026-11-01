@@ -124,5 +124,8 @@ async def remember(event: Any, content: str, *, kind: str = "semantic", importan
     except ValueError:
         memory_kind = MemoryKind.SEMANTIC
     draft = MemoryDraft(content=text, kind=memory_kind, importance=importance, source="nonebot")
-    return engine.remember(draft, scope)
+    # 按「一件事一条」写：太长的一段会拆成几条，
+    # 返回第一条（调用方只需要知道「记下了」）。
+    written = engine.remember_atomic(draft, scope)
+    return written[0] if written else None
 
