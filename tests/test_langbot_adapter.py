@@ -17,6 +17,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+# 找不到就去找本地研究目录里的 SDK 副本：
+# pip 装的版本不一定在每个 Python 环境里都在（MaiBot 的 venv 就没有），
+# 但「跑在真 SDK 上」这个验证不能因为换个解释器就失效。
+for _candidate in (
+    os.environ.get("MEMFADE_SDK_LANGBOT", ""),
+    r"B:\AI\_research_memplug\langbot_sdk",
+):
+    if _candidate and os.path.isdir(os.path.join(_candidate, "langbot_plugin")):
+        if _candidate not in sys.path:
+            sys.path.insert(0, _candidate)
+        break
+
 try:
     from langbot_plugin.api.entities import events  # noqa: F401
     from langbot_plugin.api.entities.builtin.provider.message import Message  # noqa: F401

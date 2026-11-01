@@ -6,8 +6,8 @@
 > memfade 还管「这件事**还该不该被想起来**」。
 
 ```
-核心 3795 行 · 零第三方依赖 · 单文件 SQLite · 160 项测试
-适配器 1867 行 · 覆盖 MaiBot / LangBot / AstrBot / NoneBot2 / Koishi + HTTP 侧车
+核心 3944 行 · 零第三方依赖 · 单文件 SQLite · 167 项测试
+适配器 2062 行 · 覆盖 MaiBot / LangBot / AstrBot / NoneBot2 / Koishi + HTTP 侧车
 ```
 
 ## 为什么需要它
@@ -214,7 +214,7 @@ python scripts/build_plugin.py --dest G:/AI/许杏玖-MaiBot/MaiBot/plugins
 | 适配器 | 验证方式 | 覆盖 |
 |---|---|---|
 | MaiBot | **实机部署在许杏玖上**，并用宿主自己的反序列化器验证注入的 item | 全链路实机 |
-| LangBot | 装了真的 `langbot-plugin` SDK，5 项测试跑在真 SDK 上 | API 与注入行为 |
+| LangBot | 装了真的 `langbot-plugin` SDK，5 项测试跑在真 SDK 上（找不到就退到本地研究目录里的 SDK 副本） | API 与注入行为 |
 | AstrBot | 装了真的 AstrBot SDK 源码，用 ast 静态核对 API 面 + 桩件测逻辑 | API 面与作用域逻辑 |
 | Koishi | 装了真的 koishi@4.18，`tsc` 类型检查 + 行为测试（会起真的 Python 侧车） | 类型与跨语言契约 |
 | NoneBot2 | 装了真的 nonebot2，4 项测试跑在真 SDK 上 | 作用域与公开 API |
@@ -223,6 +223,15 @@ python scripts/build_plugin.py --dest G:/AI/许杏玖-MaiBot/MaiBot/plugins
 pip install langbot-plugin            # LangBot 适配器测试需要
 pip install nonebot2                  # NoneBot2 适配器测试需要
 npm --prefix adapters/koishi test     # Koishi 类型检查 + 行为测试
+```
+
+两个 Python 环境各跑一遍，**每个适配器的真 SDK 测试都能跑到**：
+
+```powershell
+# MaiBot 的 venv（带 maibot_sdk）
+& 'G:\AI\许杏玖-MaiBot\MaiBot\.venv\Scripts\python.exe' -m unittest discover -s tests -t .
+# 系统 Python（带 langbot-plugin / nonebot2）
+python -m unittest discover -s tests -t .
 ```
 
 ### 直接用核心包
