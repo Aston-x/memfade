@@ -278,6 +278,14 @@ python scripts/bench_real_data.py --db <MaiBot.db>   # 在真实聊天数据上�
 ③ 跨会话泄漏 : 0 条
 ```
 
+**实机（许杏玖线上）**：
+
+* 提示词快照里能直接找到 memfade 构造的 item——真实发给模型的上下文里
+  确实带着记忆块（群会话 6/8、私聊 3/5 的快照命中，其余是检索没命中的预期情况）；
+* 线上记忆库：私聊 25 条 + 群 3 条，其中 21 条是从 A_Memorix 清洗后迁过来的；
+* 记忆质量：中位长度 60→18 字、超长率 85%→21%、缺三元组 85%→28%；
+* 问「她喜欢吃什么」的注入量 482→218 字，无关条目不再进 prompt。
+
 ### 消融实验：淡化到底带来了什么
 
 `scripts/bench_decay.py` 拿 [memorylens-bench](https://github.com/Neal006/memorylens-bench)
