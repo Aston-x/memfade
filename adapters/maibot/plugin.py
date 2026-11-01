@@ -1239,7 +1239,12 @@ class MemFadePlugin(MaiBotPlugin):
         chat_id = session_id or self._busiest_scope_id(engine) or "explain"
         scope = Scope(platform="qq", chat_type="session", chat_id=chat_id)
         try:
-            rows = engine.explain(query, scope, top_k=max(1, min(20, int(limit))))
+            # 向量要在这里算：宿主的面板是异步的，
+            # 引擎内部的同步取向量在事件循环里会直接放弃（不阻塞事件循环）。
+            vector = await engine.embed_query(query) if query else None
+            rows = engine.explain(
+                query, scope, top_k=max(1, min(20, int(limit))), query_vector=vector
+            )
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         self._last_explain = rows

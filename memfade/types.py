@@ -188,6 +188,14 @@ class RetrievalHit:
     channels: tuple[str, ...] = ()
     """命中通道：bm25 / vector / recent。用于调试与可解释性。"""
 
+    parts: dict = field(default_factory=dict)
+    """打分的各个分量（relevance / importance / strength / recency / frequency）。
+
+    跟命中结果放在一起，是为了**只有一处公式**——
+    「为什么召回」面板要解释的必须是真实召回用的那套分数，
+    两处各写一遍公式，迟早会漂移。
+    """
+
 
 def now_ts() -> float:
     """当前墙钟时间戳（秒）。"""

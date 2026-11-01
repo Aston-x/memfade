@@ -136,6 +136,25 @@ class TestRetrieval(unittest.TestCase):
         hits = self.engine.recall("不存在的词xyz", SCOPE, require_match=True)
         self.assertEqual(len(hits), 0, "无意义的查询不该命中任何记忆")
 
+    def test_explain_matches_real_recall(self):
+        """「为什么召回」面板解释的必须是**真实召回**的结果。
+
+        早先 explain 自己写了一套打分公式，还只用 bm25 + recent 两条通道——
+        面板说的和机器人实际做的不一样，解释就没有意义了。
+        """
+
+        self.engine.remember(MemoryDraft(content="第18届蓝桥杯官方口径", importance=0.8), SCOPE)
+        self.engine.remember(MemoryDraft(content="许杏玖喜欢辣的食物", importance=0.8), SCOPE)
+        hits = self.engine.recall("蓝桥杯", SCOPE)
+        rows = self.engine.explain("蓝桥杯", SCOPE)
+        self.assertEqual([row["id"] for row in rows], [hit.memory.id for hit in hits])
+        for row, hit in zip(rows, hits):
+            self.assertAlmostEqual(row["score"], hit.score, places=3)
+            self.assertEqual(row["channels"], sorted(hit.channels))
+            # 分量必须齐
+            for key in ("relevance", "importance", "strength", "recency", "frequency"):
+                self.assertIn(key, row["parts"])
+
     def test_multi_word_query_uses_or_semantics(self):
         """多词查询必须是 OR，不是 AND。
 

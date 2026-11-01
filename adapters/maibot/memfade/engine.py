@@ -374,10 +374,27 @@ class MemoryEngine:
         *,
         now: Optional[float] = None,
         top_k: int = 8,
+        require_match: Optional[bool] = None,
+        query_vector: Optional[Sequence[float]] = None,
     ) -> list:
-        """解释「为什么召回了这些记忆」。"""
+        """解释「为什么召回了这些记忆」。
 
-        return self.retriever.explain(query, scope.key(), now=now, top_k=top_k)
+        走的是**真实的召回路径**（同一条打分公式、同样的通道、同样的门槛），
+        所以面板说的和机器人实际做的是同一件事。
+        """
+
+        if require_match is None:
+            require_match = self._embed_one is not None
+        if query_vector is None and self._embed_one is not None:
+            query_vector = self._embed_sync(query)
+        return self.retriever.explain(
+            query,
+            scope.key(),
+            now=now,
+            top_k=top_k,
+            require_match=require_match,
+            query_vector=query_vector,
+        )
 
     def diagnose(self, scope: Optional[Scope] = None) -> dict:
         """记忆库体检。"""

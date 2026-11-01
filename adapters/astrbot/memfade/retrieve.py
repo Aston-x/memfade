@@ -265,29 +265,14 @@ class MemoryRetriever:
         vector = channel_scores.get("vector")
         uni = channel_scores.get("uni")
 
-        # 相关度：两条通道都有就各占一半，只有一条就用那条。
-        if bm25 is not None and vector is not None:
-            relevance = 0.5 * bm25 + 0.5 * vector
-        elif bm25 is not None:
-            relevance = bm25
-        elif vector is not None:
-            relevance = vector
-        else:
-            relevance = 0.0
-        if uni is not None:
-            # 单字命中比多字词命中弱得多，折价后再合并：
-            # 还能被召回，但绝不会排在词面精确命中前面。
-            relevance = max(relevance, uni * cfg.uni_discount)
-
         strength_eff = effective_strength(mem, now, self.policy)
         strength_term = cfg.strength_floor + (1.0 - cfg.strength_floor) * strength_eff
-
         evidence_at = mem.last_recalled_at or mem.created_at or mem.anchor_at
         age_days = max(0.0, (now - float(evidence_at)) / 86400.0)
         recency = math.exp(-age_days / max(0.1, cfg.recency_tau_days))
-
         freq = min(1.0, math.log1p(max(0, mem.recall_count)) / math.log(11.0))
 
+        relevance = self._relevance(channel_scores, cfg)
         score = (
             cfg.w_relevance * relevance
             + cfg.w_importance * mem.importance
@@ -304,7 +289,41 @@ class MemoryRetriever:
             strength_eff=round(strength_eff, 6),
             tier=tier,
             channels=tuple(sorted(channel_scores.keys())),
+            parts={
+                "relevance": round(relevance, 4),
+                "importance": round(mem.importance, 4),
+                "strength": round(strength_term, 4),
+                "recency": round(recency, 4),
+                "frequency": round(freq, 4),
+            },
         )
+
+    @staticmethod
+    def _relevance(channel_scores: dict[str, float], cfg: Any) -> float:
+        """把各通道的相关度合成一个数。
+
+        「相关度」只有一处定义——召回和「为什么召回」面板共用它，
+        两处各写一遍公式，迟早会漂移。
+        """
+
+        bm25 = channel_scores.get("bm25")
+        vector = channel_scores.get("vector")
+        uni = channel_scores.get("uni")
+
+        # 相关度：两条通道都有就各占一半，只有一条就用那条。
+        if bm25 is not None and vector is not None:
+            relevance = 0.5 * bm25 + 0.5 * vector
+        elif bm25 is not None:
+            relevance = bm25
+        elif vector is not None:
+            relevance = vector
+        else:
+            relevance = 0.0
+        if uni is not None:
+            # 单字命中比多字词命中弱得多，折价后再合并：
+            # 还能被召回，但绝不会排在词面精确命中前面。
+            relevance = max(relevance, uni * cfg.uni_discount)
+        return relevance
 
     def _apply_association_boost(self, hits: list[RetrievalHit], boost: float) -> list[RetrievalHit]:
         """关联加成：与首条命中共享多个关键词的候选获得小幅加分。
@@ -434,6 +453,8 @@ class MemoryRetriever:
         *,
         now: Optional[float] = None,
         top_k: int = 8,
+        require_match: bool = False,
+        query_vector: Optional[Sequence[float]] = None,
     ) -> list:
         """解释「为什么召回了这些记忆」——拆开每个打分分量。
 
@@ -442,63 +463,46 @@ class MemoryRetriever:
         """
 
         ts = float(now if now is not None else time.time())
-        cfg = self.config.retrieval
-        text = (query or "").strip()
-        candidates = {}
-        if text:
-            for mid, score in self.store.search_fts(text, scope_key, limit=cfg.channel_candidates):
-                candidates.setdefault(mid, {})["bm25"] = score
-            for mid, score in self.store.recent(scope_key, limit=cfg.channel_candidates):
-                candidates.setdefault(mid, {})["recent"] = score
+
+        # ⚠ 走**真实的召回路径**，不要在这里另写一套：
+        # 面板要解释的必须是「机器人当时真的召回了什么」，
+        # 另写一套公式（还只用 bm25 + recent 两条通道）必然和实际对不上。
+        hits = self.recall(
+            query,
+            scope_key,
+            now=now,
+            top_k=top_k,
+            require_match=require_match,
+            query_vector=query_vector,
+        )
 
         out = []
-        for mid, channels in candidates.items():
-            mem = self.store.get(mid)
-            if mem is None or mem.status in (MemoryStatus.ARCHIVED, MemoryStatus.SUPERSEDED):
-                continue
-            bm25 = channels.get("bm25")
-            relevance = bm25 if bm25 is not None else 0.0
-            eff = effective_strength(mem, ts, self.policy)
-            strength_term = cfg.strength_floor + (1.0 - cfg.strength_floor) * eff
+        for hit in hits:
+            mem = hit.memory
             evidence_at = mem.last_recalled_at or mem.created_at or mem.anchor_at
             age_days = max(0.0, (ts - float(evidence_at)) / 86400.0)
-            recency = math.exp(-age_days / max(0.1, cfg.recency_tau_days))
-            freq = min(1.0, math.log1p(max(0, mem.recall_count)) / math.log(11.0))
-            parts = {
-                "relevance": round(relevance, 4),
-                "importance": round(mem.importance, 4),
-                "strength": round(strength_term, 4),
-                "recency": round(recency, 4),
-                "frequency": round(freq, 4),
-            }
-            score = (
-                cfg.w_relevance * relevance
-                + cfg.w_importance * mem.importance
-                + cfg.w_strength * strength_term
-                + cfg.w_recency * recency
-                + cfg.w_frequency * freq
-            )
+            parts = dict(hit.parts)
             out.append(
                 {
                     "id": mem.id,
                     "content": mem.content,
                     "kind": mem.kind.value,
                     "status": mem.status.value,
-                    "score": round(score, 4),
+                    "tier": hit.tier,
+                    "score": round(hit.score, 4),
                     "parts": parts,
                     # 扁平一份，表格直接用（列名不允许带点）
-                    "relevance": parts["relevance"],
-                    "importance": parts["importance"],
-                    "strength": parts["strength"],
-                    "recency": parts["recency"],
-                    "frequency": parts["frequency"],
-                    "channels": sorted(channels.keys()),
+                    "relevance": parts.get("relevance", 0.0),
+                    "importance": parts.get("importance", 0.0),
+                    "strength": parts.get("strength", 0.0),
+                    "recency": parts.get("recency", 0.0),
+                    "frequency": parts.get("frequency", 0.0),
+                    "channels": sorted(hit.channels),
                     "age_days": round(age_days, 1),
                     "recall_count": mem.recall_count,
                 }
             )
-        out.sort(key=lambda item: item["score"], reverse=True)
-        return out[: max(1, top_k)]
+        return out
 
     def _render_fact(self, hit: RetrievalHit) -> str:
         mem = hit.memory
