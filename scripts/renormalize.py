@@ -194,7 +194,10 @@ def main() -> int:
                     "kind": _kind_of(entry["content"]),
                     "content": entry["content"],
                     "summary": "",
-                    "importance": 0.75,
+                    # ⚠ 显著性必须**继承原条目**。
+                    # 早先这里写死 0.75，等于把整段记忆的显著性抹平——
+                    # 画像和检索都靠它排序，抹平了就只能靠时间戳和长度瞎排。
+                    "importance": item["importance"],
                     "strength": 1.0,
                     "anchor_at": now,
                     "status": "active",

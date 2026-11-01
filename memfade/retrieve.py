@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
 from .config import MemFadeConfig
-from .decay import DEFAULT_POLICY, FadePolicy, effective_strength, resolve_status, stability_days
+from .decay import DEFAULT_POLICY, FadePolicy, effective_strength, resolve_status
 from .store import MemoryStore
 from .textutil import (
     content_words,
@@ -45,7 +45,7 @@ from .textutil import (
     longest_common_substring,
     similarity,
 )
-from .types import Memory, MemoryStatus, RetrievalHit
+from .types import Memory, MemoryKind, MemoryStatus, RetrievalHit
 
 
 @dataclass
@@ -566,10 +566,9 @@ class MemoryRetriever:
             else:
                 eff = effective_strength(mem, ts, self.policy)
                 score = mem.importance * (0.4 + 0.6 * eff) + 0.05 * mem.recall_count
-                # 画像应该是「这个人是谁」——名字、喜好、忌讳。
-                # 时效性事实（「这周更新里有《牧神记5》」）不该挤占画像位置，
-                # 用稳定性（天数量级）给它降权：事实类约 1~2 倍，事件类约 0.1 倍。
-                score *= min(2.0, stability_days(mem, self.policy) / 30.0)
+                # 画像应该是「这个人是谁」——名字、喜好、忌讳、关系。
+                # 偏好/关系/做法比泛泛的事实更该常驻。
+                score *= _PROFILE_KIND_WEIGHT.get(mem.kind, 1.0)
                 # 同为「事实」但带日期的，是日程而不是画像——
                 # 「2026年11月1日这周更新里有《牧神记5》」过两周就过期了。
                 if _has_time_marker(mem.content):
@@ -583,10 +582,16 @@ class MemoryRetriever:
         # 画像是「这个人是谁」——名字、喜好、忌讳。
         # 几百字的百科段落不属于画像，它属于记忆块。
         max_len = self.config.retrieval.max_profile_chars * 2
+        # 同一件事的多个说法不各占一行：
+        # 实机画像里出现过三条《Re:从零开始的异世界生活》第四季，
+        # 挤掉了「喜欢什么」「讨厌什么」这类真正该常驻的信息。
+        picked: list[str] = []
         for _, mem in scored:
             if len(lines) >= max_items:
                 break
             if len(mem.content) > max_len:
+                continue
+            if _same_topic(mem.content, picked):
                 continue
             body = _clip(mem.content.strip(), self.config.retrieval.max_profile_chars)
             if not body:
@@ -596,8 +601,49 @@ class MemoryRetriever:
                 break
             lines.append(line)
             used_ids.append(mem.id)
+            picked.append(body)
             used += len(line)
         return ProfileBlock(text="\n".join(lines), ids=tuple(used_ids))
+
+
+_PROFILE_KIND_WEIGHT = {
+    MemoryKind.PREFERENCE: 1.20,
+    MemoryKind.RELATION: 1.15,
+    MemoryKind.SKILL: 1.10,
+    MemoryKind.SEMANTIC: 1.00,
+}
+"""画像里各类记忆的权重。
+
+画像是「这个人是谁」：喜好、关系、做法比泛泛的事实更该常驻。
+
+⚠ 早先这里用的是「稳定性（天数量级）」当代理，但那个值是
+``base × (1 + gain × importance)``——importance 一高就顶到上限，
+所有种类都变成同一个系数，等于没加权。
+"""
+
+
+def _same_topic(content: str, picked: Sequence[str]) -> bool:
+    """这条记忆是不是跟已经选中的某条讲同一件事。
+
+    两种判据一起用：
+
+    * Dice 相似度 ≥0.45——整体说的是一回事（换个说法）；
+    * 最长公共子串 ≥5 字——同一个专有名词或长句
+      （「《Re:从零开始的异世界生活》第四季」）。
+
+    两条都在 5 字以下（「许杏玖喜欢辣的食物」vs「许杏玖讨厌香菜」）
+    就不算同一件事——那是两件不同的事，都该留着。
+    """
+
+    text = (content or "").strip()
+    if not text:
+        return True
+    for other in picked:
+        if similarity(text, other) >= 0.45:
+            return True
+        if len(longest_common_substring(text, other)) >= 5:
+            return True
+    return False
 
 
 def _compose_fact(mem: Memory) -> str:

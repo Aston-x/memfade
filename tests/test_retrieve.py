@@ -366,6 +366,35 @@ class TestRetrieval(unittest.TestCase):
         self.assertIn("许杏玖喜欢辣的食物", profile)
         self.assertNotIn("牧神记", profile)
 
+    def test_profile_does_not_repeat_same_topic(self):
+        """同一件事的多个说法不各占一行。
+
+        实机画像里出现过三条《Re:从零开始的异世界生活》第四季，
+        挤掉了「喜欢什么」「讨厌什么」这类真正该常驻的信息。
+        """
+
+        for content in (
+            "许杏玖追完《Re:从零开始的异世界生活》第四季",
+            "许杏玖最喜欢《Re:从零开始的异世界生活》第四季的蕾姆",
+            "许杏玖讨厌香菜",
+        ):
+            self.engine.remember(MemoryDraft(content=content, kind=MemoryKind.SEMANTIC, importance=0.8), SCOPE)
+        profile = self.engine.build_profile(SCOPE, max_items=3)
+        lines = profile.splitlines()
+        self.assertLessEqual(len(lines), 2, "同一话题只留一条：%s" % profile)
+        self.assertIn("香菜", profile, "不同的事应该都留着")
+
+    def test_profile_prefers_preference_and_relation(self):
+        """画像是「这个人是谁」——偏好和关系排在泛泛的事实前面。"""
+
+        self.engine.remember(MemoryDraft(content="某件泛泛的事实记录", kind=MemoryKind.SEMANTIC, importance=0.8), SCOPE)
+        self.engine.remember(MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8), SCOPE)
+        self.engine.remember(MemoryDraft(content="季怡称呼许杏玖为宝宝", kind=MemoryKind.RELATION, importance=0.8), SCOPE)
+        profile = self.engine.build_profile(SCOPE, max_items=2)
+        lines = profile.splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertNotIn("泛泛的事实", lines[-1], "偏好和关系应该排在前面")
+
     def test_unrelated_recent_memory_is_not_injected(self):
         """不相关的东西不该进 prompt——这是「总提旧事」的根源。"""
 
