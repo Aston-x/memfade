@@ -19,5 +19,10 @@ class Config(BaseModel):
     memfade_llm_model: str = Field(default="", description="抽取用的 LLM 模型名")
 
 
-config = get_plugin_config(Config)
+try:
+    config = get_plugin_config(Config)
+except Exception:
+    # NoneBot 还没初始化时（插件被提前导入、或单测里）也要能用默认值，
+    # 不能因为拿不到配置就整个插件加载失败。
+    config = Config()
 

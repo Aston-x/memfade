@@ -171,6 +171,24 @@ python scripts/build_plugin.py --dest G:/AI/许杏玖-MaiBot/MaiBot/plugins
 * `/记住 <内容>`——显式记住；
 * `/忘掉 <片段>`——忘掉一条。
 
+### 各适配器的验证程度
+
+不吹牛，逐个说清楚每个适配器被验证到哪一步：
+
+| 适配器 | 验证方式 | 覆盖 |
+|---|---|---|
+| MaiBot | **实机部署在许杏玖上**，并用宿主自己的反序列化器验证注入的 item | 全链路实机 |
+| LangBot | 装了真的 `langbot-plugin` SDK，5 项测试跑在真 SDK 上 | API 与注入行为 |
+| AstrBot | 装了真的 AstrBot SDK 源码，用 ast 静态核对 API 面 + 桩件测逻辑 | API 面与作用域逻辑 |
+| Koishi | 装了真的 koishi@4.18，`tsc` 类型检查 + 行为测试（会起真的 Python 侧车） | 类型与跨语言契约 |
+| NoneBot2 | 装了真的 nonebot2，4 项测试跑在真 SDK 上 | 作用域与公开 API |
+
+```bash
+pip install langbot-plugin            # LangBot 适配器测试需要
+pip install nonebot2                  # NoneBot2 适配器测试需要
+npm --prefix adapters/koishi test     # Koishi 类型检查 + 行为测试
+```
+
 ### 直接用核心包
 
 ```python

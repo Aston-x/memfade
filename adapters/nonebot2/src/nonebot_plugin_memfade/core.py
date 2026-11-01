@@ -57,21 +57,30 @@ _counter: Dict[str, int] = {}
 
 
 def scope_of(event: Any) -> Scope:
-    """从事件构造作用域。群聊按群号隔离，私聊按用户号隔离。"""
+    """从事件构造作用域。
 
-    group_id = ""
-    user_id = ""
-    try:
-        group_id = str(event.get_session_id() or "")
-    except Exception:
-        group_id = ""
-    try:
-        user_id = str(event.get_user_id() or "")
-    except Exception:
-        user_id = ""
-    if group_id:
-        return Scope(platform="nonebot", chat_type="group", chat_id=group_id)
-    return Scope(platform="nonebot", chat_type="private", chat_id=user_id or "unknown")
+    优先用 ``get_session_id()``——在 NoneBot2 里它就是**会话**粒度
+    （群聊一个群一个、私聊一个人一个），正好是记忆要的隔离粒度。
+
+    不依赖任何具体适配器：OneBot v11/v12、NapCat、Lagrange 都有这个方法，
+    没有的话退化成 group_id / user_id。
+    """
+
+    def _call(name: str) -> str:
+        getter = getattr(event, name, None)
+        if not callable(getter):
+            return ""
+        try:
+            return str(getter() or "")
+        except Exception:
+            return ""
+
+    session_id = _call("get_session_id")
+    group_id = _call("get_group_id")
+    user_id = _call("get_user_id")
+    chat_type = "group" if group_id else "private"
+    chat_id = session_id or group_id or user_id or "unknown"
+    return Scope(platform="nonebot", chat_type=chat_type, chat_id=chat_id)
 
 
 async def build_context(event: Any, query: str = "") -> str:

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from nonebot import on_message, on_regex
-from nonebot.adapters.onebot.v11 import GroupMessageEvent, MessageEvent
 from nonebot.log import logger
 from nonebot.matcher import Matcher
 
@@ -21,7 +20,7 @@ query_cmd = on_regex(r"^记忆(?:\s+搜\s*(?P<query>.+))?$")
 
 
 @memory_observer.handle()
-async def observe(event: MessageEvent) -> None:
+async def observe(event) -> None:
     """旁听消息：抽取出记忆，并把记忆文本挂到 event 上。"""
 
     try:
@@ -58,7 +57,7 @@ async def observe(event: MessageEvent) -> None:
 
 
 @remember_cmd.handle()
-async def handle_remember(matcher: Matcher, event: MessageEvent) -> None:
+async def handle_remember(matcher: Matcher, event) -> None:
     """显式记住。"""
 
     content = str(matcher.get("content") or "").strip()
@@ -71,7 +70,7 @@ async def handle_remember(matcher: Matcher, event: MessageEvent) -> None:
 
 
 @forget_cmd.handle()
-async def handle_forget(matcher: Matcher, event: MessageEvent) -> None:
+async def handle_forget(matcher: Matcher, event) -> None:
     """忘掉一条。"""
 
     content = str(matcher.get("content") or "").strip()
@@ -85,7 +84,7 @@ async def handle_forget(matcher: Matcher, event: MessageEvent) -> None:
 
 
 @query_cmd.handle()
-async def handle_query(matcher: Matcher, event: MessageEvent) -> None:
+async def handle_query(matcher: Matcher, event) -> None:
     """查询记忆。"""
 
     query = str(matcher.get("query") or "").strip()

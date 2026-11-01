@@ -19,10 +19,7 @@ NoneBot2 没有统一的「往 LLM prompt 里插东西」的钩子——
 
 from __future__ import annotations
 
-from nonebot import require
 from nonebot.plugin import PluginMetadata
-
-require("nonebot_plugin_apscheduler")
 
 from .config import Config  # noqa: E402
 
@@ -33,7 +30,9 @@ __plugin_meta__ = PluginMetadata(
     type="application",
     homepage="https://github.com/Aston-x/memfade",
     config=Config,
-    supported_adapters={"~onebot.v11", "~onebot.v12"},
+    # 不限定适配器：任何 NoneBot2 适配器都能用（OneBot v11/v12、NapCat、
+    # Lagrange、QQ 官方……）。
+    # 刻意不 import nonebot.adapters.* —— 否则用户没装对应适配器就装不上插件。
 )
 
 from .core import build_context, engine, remember, recall  # noqa: E402,F401
