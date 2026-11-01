@@ -229,7 +229,33 @@ class MemoryEngine:
         result = await self.extractor.extract(messages, source=source)
         if not result.drafts:
             return []
-        return self.remember_many(result.drafts, scope, now=now, meta=meta)
+        written = self.remember_many(result.drafts, scope, now=now, meta=meta)
+        # ⚠ 必须在这里补向量：写入路径是同步的，而宿主的嵌入服务多半是 async 的——
+        # 有事件循环时同步取向量会堵住事件循环，所以同步路径只能跳过。
+        # **不补这一下，记忆库里一条向量都没有，向量检索这条通道等于没开。**
+        await self.embed_memories(written)
+        return written
+
+    async def embed_memories(self, memories: Sequence[Memory]) -> int:
+        """给还没向量的记忆补向量。返回补上的条数。
+
+        同步写入路径在有事件循环时拿不到向量（`_embed_sync` 会跳过，
+        免得堵住事件循环），所以异步路径必须自己补齐。
+
+        没配嵌入模型时什么都不做——纯 BM25 也能跑。
+        """
+
+        if self._embed_one is None:
+            return 0
+        count = 0
+        for mem in memories or ():
+            if mem is None or not mem.id:
+                continue
+            vector = await self.embed_query(mem.content)
+            if vector:
+                self.store.set_embedding(mem.id, vector)
+                count += 1
+        return count
 
     def _find_near_duplicate(self, content: str, scope_key: str) -> Optional[Memory]:
         """近似重复检测。命中的话把旧记忆强化一下而不是新建。"""

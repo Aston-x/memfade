@@ -128,6 +128,9 @@ async def remember(event: Any, content: str, *, kind: str = "semantic", importan
         memory_kind = MemoryKind.SEMANTIC
     draft = MemoryDraft(content=text, kind=memory_kind, importance=importance, source="nonebot")
     written = engine.remember_atomic(draft, scope)
+    # 补向量：写入是同步的，而嵌入服务多半是 async 的——
+    # 不补的话记忆库里一条向量都没有，向量检索等于没开。
+    await engine.embed_memories(written)
     return written[0] if written else None
 
 
@@ -145,5 +148,7 @@ async def remember_all(
     except ValueError:
         memory_kind = MemoryKind.SEMANTIC
     draft = MemoryDraft(content=text, kind=memory_kind, importance=importance, source="nonebot")
-    return engine.remember_atomic(draft, scope)
+    written = engine.remember_atomic(draft, scope)
+    await engine.embed_memories(written)
+    return written
 

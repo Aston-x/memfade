@@ -132,7 +132,11 @@ class MemoryRetriever:
                 collect([(mid, score)], "revive")
             if query_vector:
                 hits = self.store.search_vector(
-                    query_vector, scope_key, limit=cfg.channel_candidates, kinds=kinds
+                    query_vector,
+                    scope_key,
+                    limit=cfg.channel_candidates,
+                    kinds=kinds,
+                    min_gap=cfg.vector_min_gap,
                 )
                 collect(hits, "vector")
 

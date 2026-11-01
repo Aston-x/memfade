@@ -345,6 +345,25 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         self.plugin._rebuild_engine()
         self.assertIn("qq:session:old-scope", self.plugin._scopes)
 
+    async def test_extracted_memories_get_embeddings(self):
+        """抽出来的记忆必须带上向量。
+
+        写入路径是同步的，宿主的嵌入服务是 async 的——
+        有事件循环时同步取向量会堵住事件循环，所以同步路径会跳过。
+        **不补这一下，记忆库里一条向量都没有，向量检索这条通道等于没开。**
+        """
+
+        plugin = self.plugin
+        plugin._ctx.llm.reply = (
+            '[{"content":"许杏玖喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+        )
+        await plugin.handle_after_process(message=make_message("我喜欢辣的"))
+        engine = plugin._engine
+        self.assertEqual(engine.store.count("qq:session:sess-1"), 1)
+        mem = engine.store.iter_scope("qq:session:sess-1")[0]
+        self.assertIsNotNone(mem.embedding, "抽出来的记忆没有向量，向量检索等于没开")
+
     async def test_scope_parsing_private(self):
         from adapters.maibot.plugin import MemFadePlugin
 

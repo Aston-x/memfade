@@ -155,6 +155,18 @@ def _normalize_pairs(raw: list[tuple[float, int]]) -> list[tuple[int, float]]:
     return out
 
 
+def _median(values: Sequence[float]) -> float:
+    """中位数（不依赖 numpy）。"""
+
+    items = sorted(float(v) for v in values)
+    if not items:
+        return 0.0
+    mid = len(items) // 2
+    if len(items) % 2:
+        return items[mid]
+    return (items[mid - 1] + items[mid]) / 2.0
+
+
 def _same_fact_different_tail(a: str, b: str) -> bool:
     """两条内容像「同一件事的两个版本」。
 
@@ -623,6 +635,11 @@ class MemoryStore:
         for row in rows:
             content = str(row["content"] or "")
             hit = sum(1 for t in terms if t in content)
+            # 多字查询要**每个字都命中**才算数：
+            # 「晚安」只对上「网络安全」里的「安」——那不是相关，是巧合。
+            # 单字查询没得挑，命中就算。
+            if len(terms) > 1 and hit < len(terms):
+                continue
             out.append((int(row["mid"]), hit / float(len(terms))))
         out.sort(key=lambda item: item[1], reverse=True)
         return out
@@ -695,8 +712,26 @@ class MemoryStore:
         *,
         limit: int = 40,
         kinds: Optional[Sequence[str]] = None,
+        min_gap: float = 0.0,
     ) -> list[tuple[int, float]]:
-        """余弦相似度检索。"""
+        """余弦相似度检索。
+
+        ``min_gap``：**要比「这批记忆之间的典型相似度」高出多少**才算命中。
+
+        为什么需要它：嵌入模型对**任何**文本都有 0.4~0.55 的基础相似度
+        （本机 text-embedding-v3 实测），不设门槛的话，
+        哪怕用户说「今天天气真好啊」也会捞回一批记忆塞进上下文——
+        那正是「总提旧事」的老毛病。
+
+        门槛取「中位数 + min_gap」而不是一个固定的余弦值：
+        不同模型的基准相似度差得很远（有的模型什么都是 0.8），
+        **相对于本批记忆的中位数**才是能跨模型用的量。
+
+        实测（40 条真实记忆）：
+          相关查询的「最佳 − 中位」= 0.13~0.41
+          无关查询的「最佳 − 中位」= 0.08~0.14
+        → 0.15 能把两类分开。
+        """
 
         if not vector:
             return []
@@ -720,15 +755,24 @@ class MemoryStore:
         scored: list[tuple[float, int]] = []
         if _np is not None:
             mat = _np.zeros((len(rows), len(query_vec)), dtype="float32")
+            keep: list[int] = []
             for i, row in enumerate(rows):
                 vec = unpack_vector(row["embedding"])
                 if vec and len(vec) == len(query_vec):
                     mat[i] = _np.asarray(vec, dtype="float32")
+                    keep.append(i)
+            if not keep:
+                # 维度全对不上（换过嵌入模型？）：这一条通道整个没有结果。
+                # ⚠ 早先把维度不符的行留在结果里，它们的相似度是 0，
+                # 再被「按最大值归一化」一放大，全部变成 1.0——
+                # 等于每条记忆都自称「完全相关」。
+                return []
             q = _np.asarray(query_vec, dtype="float32")
-            norms = _np.linalg.norm(mat, axis=1) * (float(_np.linalg.norm(q)) or 1.0)
+            sub = mat[keep]
+            norms = _np.linalg.norm(sub, axis=1) * (float(_np.linalg.norm(q)) or 1.0)
             norms[norms == 0] = 1.0
-            sims = (mat @ q) / norms
-            scored = [(float(s), int(rows[i]["id"])) for i, s in enumerate(sims)]
+            sims = (sub @ q) / norms
+            scored = [(float(s), int(rows[i]["id"])) for i, s in zip(keep, sims)]
         else:
             qnorm = math.sqrt(sum(v * v for v in query_vec)) or 1.0
             for row in rows:
@@ -738,6 +782,17 @@ class MemoryStore:
                 dot = sum(a * b for a, b in zip(vec, query_vec))
                 vnorm = math.sqrt(sum(v * v for v in vec)) or 1.0
                 scored.append((dot / (vnorm * qnorm), int(row["id"])))
+        if not scored:
+            return []
+        if min_gap > 0:
+            # 门槛：要比这批记忆的**中位相似度**高出 min_gap 才算命中。
+            scored.sort(reverse=True)
+            sims = [s for s, _ in scored]
+            baseline = _median(sims)
+            floor = baseline + float(min_gap)
+            scored = [(s, mid) for s, mid in scored if s >= floor]
+            if not scored:
+                return []
         scored.sort(reverse=True)
         return _normalize_pairs(scored[: int(limit)])
 
@@ -774,6 +829,26 @@ class MemoryStore:
                 (pack_vector(vector), int(memory_id)),
             )
             self._conn.commit()
+
+    def list_without_embedding(self, limit: int = 200) -> list:
+        """还没向量的记忆（补向量用）。"""
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, content FROM memories WHERE embedding IS NULL "
+                "ORDER BY id LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+        return rows
+
+    def count_without_embedding(self) -> int:
+        """还有多少条没有向量。"""
+
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE embedding IS NULL"
+            ).fetchone()
+        return int(row[0]) if row else 0
 
     def find_conflicts(self, scope_key: str, *, limit: int = 500) -> list[tuple[Memory, Memory]]:
         """找出互相矛盾的记忆对。

@@ -393,6 +393,62 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
             "更新后这条记忆搜不到了（索引被清空）",
         )
 
+    async def test_multi_char_query_needs_all_chars(self):
+        """多字查询要每个字都命中才算数。
+
+        「晚安」只对上「网络安全」里的「安」——那不是相关，是巧合。
+        """
+
+        scope = SCOPES[0]
+        self.engine.remember(
+            MemoryDraft(content="电子赛科目单片机、网络安全", importance=0.9), scope
+        )
+        self.engine.remember(MemoryDraft(content="许杏玖喜欢辣的食物", importance=0.9), scope)
+        hits = self.engine.recall("晚安", scope, top_k=5, require_match=True)
+        self.assertFalse(
+            any("网络安全" in hit.memory.content for hit in hits),
+            "只对一个字的记忆不该被「晚安」捞出来",
+        )
+        hits = self.engine.recall("辣", scope, top_k=5, require_match=True)
+        self.assertTrue(any("辣的食物" in hit.memory.content for hit in hits))
+
+    async def test_vector_channel_ignores_background_similarity(self):
+        """向量通道不能把「什么都有点像」的记忆当成命中。
+
+        嵌入模型对任何文本都有 0.4~0.55 的基础相似度，
+        不设门槛的话，用户说「今天天气真好啊」也会捞回一批记忆——
+        那正是「总提旧事」的老毛病。
+
+        判据是「比这批记忆的中位相似度高出多少」，所以这个测试
+        要构造两批**彼此很像**的记忆，再看查询是不是其中的离群者。
+        """
+
+        store = self.engine.store
+        scope = SCOPES[0]
+        dim = 8
+        query = [1.0] + [0.0] * (dim - 1)
+        # 背景相似度：所有记忆都朝同一个「不像查询」的方向
+        background = [0.6] + [0.8] + [0.0] * (dim - 2)
+
+        # 一批彼此高度相似的记忆（背景相似度很高）
+        for i in range(10):
+            mem = self.engine.remember(
+                MemoryDraft(content="第%d条记录" % i, importance=0.8), scope
+            )
+            store.set_embedding(mem.id, list(background))
+
+        # 查询跟它们一样「普通」→ 没有离群者 → 不该有命中
+        hits = store.search_vector(query, scope.key(), min_gap=0.15)
+        self.assertEqual(hits, [], "背景相似度不该被当成命中")
+
+        # 有一条跟查询几乎一样 → 它是真正的离群者 → 该命中
+        special = self.engine.remember(
+            MemoryDraft(content="那条真正相关的记忆", importance=0.9), scope
+        )
+        store.set_embedding(special.id, list(query))
+        hits = store.search_vector(query, scope.key(), min_gap=0.15)
+        self.assertEqual([mid for mid, _ in hits], [special.id])
+
 
 if __name__ == "__main__":
     unittest.main()

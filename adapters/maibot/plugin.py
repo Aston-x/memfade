@@ -845,7 +845,9 @@ class MemFadePlugin(MaiBotPlugin):
             cross_scope=bool(self.config.memory.cross_session),
             source="command",
         )
-        written = [m.content for m in engine.remember_atomic(draft, scope)]
+        memories = engine.remember_atomic(draft, scope)
+        await engine.embed_memories(memories)
+        written = [m.content for m in memories]
         if not written:
             return False, "没记下来（可能被判定为不重要或重复）", 1
         if len(written) == 1:
@@ -945,6 +947,7 @@ class MemFadePlugin(MaiBotPlugin):
         written = engine.remember_atomic(draft, scope)
         if not written:
             return {"name": "remember_something", "content": "没记下来（内容不重要或与已有记忆重复）"}
+        await engine.embed_memories(written)
         if len(written) == 1:
             return {"name": "remember_something", "content": f"记住了：{written[0].content}"}
         return {
