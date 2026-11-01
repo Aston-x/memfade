@@ -217,6 +217,25 @@ ctx = engine.build_context("今天吃什么", scope)
 print(ctx.text)
 ```
 
+### 从旧的记忆库迁移
+
+已经有一套记忆系统（比如 A_Memorix）？可以把它的事实**洗干净**再带过来：
+
+```bash
+python scripts/import_a_memorix.py \
+    --source "<旧库>/metadata.db" \
+    --target "<memfade>/memfade.db" \
+    --maibot-account 2760135586 --maibot-user 1738157278 \
+    --host-root "<MaiBot 根目录>"
+```
+
+流程是：读旧库 → 用宿主 LLM 规范化成「一件事一条 + 三元组」→ memfade 去重入库。
+旧库里「称对方为宝宝」有 3 种说法、「二十块加价与铁子无关」有 4 种说法，
+迁移后会被合并。实测 41 条旧事实 → 入库 21 条。
+
+作用域用 MaiBot 的 `session_id` 公式算，**chat_type 必须是 `session`**——
+写成 `group`/`private` 机器人就读不到。
+
 ## 借鉴来源
 
 这个项目的思路不是凭空来的，下面这些项目提供了关键模块的参考：
