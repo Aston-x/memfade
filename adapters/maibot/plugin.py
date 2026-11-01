@@ -314,6 +314,15 @@ class MemFadePlugin(MaiBotPlugin):
             llm = HostLLMClient(self, task_name)
         embedder = HostEmbeddingClient(self) if self.config.memory.use_host_embedding else None
         self._engine = MemoryEngine(config, llm=llm, embedder=embedder)
+        # 把库里已有的会话补进「已知会话」集合。
+        # 不补的话：插件一重启（宿主重启、配置热重载都会重建引擎），
+        # 那些没再发过消息的会话就再没人整理了——
+        # 档位是读时算的没错，但 **gist 压缩 / 合并 / 淘汰** 都得靠整理任务做。
+        try:
+            for scope_key, _count in self._engine.store.scope_counts():
+                self._scopes.add(str(scope_key))
+        except Exception as exc:  # pragma: no cover - 读库失败不该挡住加载
+            self.ctx.logger.warning("[memfade] 读取已有会话失败: %s", exc)
         self.ctx.logger.info("[memfade] 引擎就绪：%s", db_path)
 
     # ------------------------------------------------------------------ #
