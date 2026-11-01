@@ -207,7 +207,25 @@ class FakeLogger:
         pass
 
 
-class FakeLLM:
+class FakeEmbedMixin:
+    """假嵌入：用字符分布造一个确定性的假向量，够用来区分不同文本。
+
+    宿主给插件的 ``ctx.llm`` 同时提供 ``generate`` 和 ``embed``，
+    假件也得两样都有——不然插件的向量通道在测试里永远是关着的，
+    测不到「抽出来的记忆到底有没有向量」。
+    """
+
+    async def embed(self, texts, task_name="embedding", **kwargs):
+        out = []
+        for text in texts:
+            vec = [0.0] * 16
+            for i, ch in enumerate(str(text)):
+                vec[i % 16] += (ord(ch) % 17) / 17.0
+            out.append({"embedding": vec, "model_name": "fake-embed"})
+        return {"success": True, "results": out}
+
+
+class FakeLLM(FakeEmbedMixin):
     def __init__(self, reply: str):
         self.reply = reply
         self.calls: List[str] = []
@@ -215,18 +233,6 @@ class FakeLLM:
     async def generate(self, prompt, max_tokens=None, temperature=None, **kwargs):
         self.calls.append(str(prompt))
         return {"success": True, "response": self.reply, "reasoning": "", "model_name": "fake"}
-
-
-class FakeEmbed:
-    async def embed(self, texts, task_name="embedding", **kwargs):
-        out = []
-        for text in texts:
-            # 用字符分布造一个确定性的假向量，够用来区分不同文本
-            vec = [0.0] * 16
-            for i, ch in enumerate(str(text)):
-                vec[i % 16] += (ord(ch) % 17) / 17.0
-            out.append({"embedding": vec, "model_name": "fake-embed"})
-        return {"success": True, "results": out}
 
 
 class FakeContext:
