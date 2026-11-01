@@ -342,7 +342,18 @@ class MemoryStore:
             return memory.id
 
     def update(self, memory: Memory, fts_tokens: str = "") -> None:
-        """整体更新一条记忆。"""
+        """整体更新一条记忆。
+
+        ⚠ ``fts_tokens`` 留空时**自己算**。
+        FTS5 的触发器靠这一列重建索引——传空串等于把这条记忆的索引清空，
+        它从此**搜不到**了（内容还在库里，只是再也查不出来）。
+        这种坑最难查，所以这里不给「忘记传」留机会。
+        """
+
+        if not fts_tokens:
+            from .textutil import fts_text
+
+            fts_tokens = fts_text(memory.content)
 
         with self._lock:
             self._conn.execute(

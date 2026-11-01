@@ -374,6 +374,25 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
         second = self.engine.store.get(mem.id).strength
         self.assertAlmostEqual(first, second, places=6, msg="冷却期内不该重复强化")
 
+    async def test_update_without_fts_tokens_keeps_it_searchable(self):
+        """忘记传 fts_tokens 时，记忆不该从此搜不到。
+
+        FTS5 的触发器靠这一列重建索引——传空串等于把索引清空。
+        这种坑最难查（内容还在，就是查不出来），所以 store 自己兜住。
+        """
+
+        scope = SCOPES[0]
+        mem = self.engine.remember(
+            MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9), scope
+        )
+        mem.importance = 0.95
+        self.engine.store.update(mem)  # 故意不传 fts_tokens
+        hits = self.engine.recall("辣的食物", scope, top_k=5)
+        self.assertTrue(
+            any(hit.memory.id == mem.id for hit in hits),
+            "更新后这条记忆搜不到了（索引被清空）",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
