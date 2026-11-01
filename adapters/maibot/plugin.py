@@ -1145,7 +1145,22 @@ class MemFadePlugin(MaiBotPlugin):
             elif line.startswith("机器人："):
                 messages.append({"role": "assistant", "content": line[4:].strip()})
         try:
-            result = await engine.extractor.extract(messages, source="selfcheck")
+            # ⚠ 加个超时：LLM 慢的时候（MiniMax 的 thinking 可能跑到 60 秒+）
+            # WebUI 的网关会先 504，按钮就变成「点了没反应」。
+            # 这里自己兜住：超时就说清楚是超时，别让面板报错。
+            try:
+                result = await asyncio.wait_for(
+                    engine.extractor.extract(messages, source="selfcheck"), timeout=25.0
+                )
+            except asyncio.TimeoutError:
+                return {
+                    "ok": True,
+                    "used_llm": False,
+                    "error": "",
+                    "note": "宿主 LLM 超过 25 秒没返回，本次没走 LLM（规则兜底可用）",
+                    "draft_count": 0,
+                    "drafts": [],
+                }
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         return {
@@ -1224,7 +1239,13 @@ class MemFadePlugin(MaiBotPlugin):
         if not items:
             return {"ok": True, "items": []}
         try:
-            out = await self._canonicalize_chunked(engine, items)
+            # 同样加超时（理由见 extract_check）：面板按钮不能因为模型慢就 504。
+            try:
+                out = await asyncio.wait_for(
+                    self._canonicalize_chunked(engine, items), timeout=60.0
+                )
+            except asyncio.TimeoutError:
+                return {"ok": False, "error": "宿主 LLM 超过 60 秒没返回，先看看宿主 LLM 通不通"}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "items": out}
