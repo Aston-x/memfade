@@ -55,6 +55,16 @@ class Turn:
     """这一轮要写入的事实（模拟抽取器的输出）。"""
 
 
+# (旧值, 新值, 更新发生在第几轮)
+# ⚠ 每条的更新点不一样：「住在杭州」在脚本中点被取代，
+# 「喜欢吃辣」要到 3/4 处才被取代。统计漂移必须按各自的更新点算，
+# 否则会在「还没变」的那几轮里就把它算成漂移。
+STALE_PAIRS = (
+    ("住在杭州", "住在上海", "mid"),
+    ("喜欢吃辣", "现在不吃辣", "late"),
+)
+
+
 def build_script(turns: int, days: float) -> List[Turn]:
     """脚本化对话：事实先建立，中途被更新，后面还会被追问。"""
 
@@ -197,7 +207,16 @@ class Metrics:
     recall_total: int = 0
     drift_hits: int = 0
     drift_total: int = 0
+    drift_fact_hits: int = 0
+    """旧值出现在**事实层**的次数——这才是真的「旧值残留」。"""
+
+    drift_echo_hits: int = 0
+    """旧值出现在**回声层**的次数——这是设计（带「可能已经变了」）。"""
+
     contradiction_hits: int = 0
+    contradiction_fact_hits: int = 0
+    """新旧两值同时出现在事实层——这才是真的「新旧并存」。"""
+
     context_chars: int = 0
     context_samples: int = 0
     stored: int = 0
@@ -213,7 +232,16 @@ class Metrics:
         return {
             "recall@T": round(self.recall_hits / self.recall_total, 4) if self.recall_total else 0.0,
             "temporal_drift": round(self.drift_hits / self.drift_total, 4) if self.drift_total else 0.0,
+            "temporal_drift_fact": (
+                round(self.drift_fact_hits / self.drift_total, 4) if self.drift_total else 0.0
+            ),
+            "temporal_drift_echo": (
+                round(self.drift_echo_hits / self.drift_total, 4) if self.drift_total else 0.0
+            ),
             "contradiction": round(self.contradiction_hits / self.drift_total, 4) if self.drift_total else 0.0,
+            "contradiction_fact": (
+                round(self.contradiction_fact_hits / self.drift_total, 4) if self.drift_total else 0.0
+            ),
             "avg_context_chars": round(self.context_chars / self.context_samples, 1) if self.context_samples else 0.0,
             "stored": self.stored,
             "live_ratio": round(
@@ -242,7 +270,7 @@ def run(db_path: str, script: Sequence[Turn], *, fade: bool) -> Metrics:
     engine = make_engine(db_path, fade=fade)
     metrics = Metrics()
     try:
-        for turn in script:
+        for turn_index, turn in enumerate(script):
             now = time_base() + turn.day * 86400.0
             for fact in turn.facts:
                 draft = MemoryDraft(
@@ -281,15 +309,32 @@ def run(db_path: str, script: Sequence[Turn], *, fade: bool) -> Metrics:
                     metrics.old_topic_hits += 1
 
             # 更新之后，旧值还在不在
-            update_day = script[len(script) // 2].day
-            if turn.day > update_day:
+            # ⚠ 每条旧值要按**它自己的**更新时间算：
+            # 「住在杭州」在脚本中点被「住在上海」取代，
+            # 「喜欢吃辣」要到更晚才被「现在不吃辣」取代。
+            # 早先统一按中点算，等于在「吃辣」还没变的那几轮里
+            # 就开始统计它——那不是漂移，是它当时确实还成立。
+            for stale, fresh, when in STALE_PAIRS:
+                update_index = len(script) // 2 if when == "mid" else (len(script) * 3) // 4
+                if turn_index <= update_index:
+                    continue
                 # 注意不能用「吃辣」当旧值——它是「不吃辣」的子串，会误判。
-                for stale, fresh in (("住在杭州", "住在上海"), ("喜欢吃辣", "现在不吃辣")):
-                    metrics.drift_total += 1
-                    if stale in text:
-                        metrics.drift_hits += 1
-                        if fresh in text:
-                            metrics.contradiction_hits += 1
+                fact_text = "\n".join(hit.memory.content for hit in context.facts)
+                echo_text = "\n".join(hit.memory.content for hit in context.echoes)
+                metrics.drift_total += 1
+                if stale in text:
+                    metrics.drift_hits += 1
+                    if fresh in text:
+                        metrics.contradiction_hits += 1
+                # 分层看：旧值出现在**事实层**才是问题（它被当成
+                # 「现在仍然成立」的知识）；出现在回声层是**设计**——
+                # 回声层带「可能已经变了」的标记，本来就是给旧事留个位置。
+                if stale in fact_text:
+                    metrics.drift_fact_hits += 1
+                if stale in echo_text:
+                    metrics.drift_echo_hits += 1
+                if stale in fact_text and fresh in fact_text:
+                    metrics.contradiction_fact_hits += 1
 
         # 收尾：跑一轮整理，看最终分布
         final_now = time_base() + (script[-1].day + 1) * 86400.0
@@ -353,8 +398,11 @@ def main() -> int:
 
     row("Recall@T", "recall@T", "该记住的记住了吗", True)
     row("老话题召回", "old_topic_recall", "问起旧事还答得上吗", True)
-    row("Temporal Drift", "temporal_drift", "旧值残留比例（越低越好）", False)
-    row("Contradiction", "contradiction", "新旧并存比例（越低越好）", False)
+    row("旧值残留(事实层)", "temporal_drift_fact", "旧值被当成仍然成立（越低越好）", False)
+    row("旧值残留(回声层)", "temporal_drift_echo", "旧值带「可能已变」标记（设计如此）", False)
+    row("旧值残留(合计)", "temporal_drift", "旧值出现在上下文里（越低越好）", False)
+    row("新旧并存(事实层)", "contradiction_fact", "新旧同时被当成事实（越低越好）", False)
+    row("新旧并存(合计)", "contradiction", "上下文里同时有新旧（越低越好）", False)
     row("注入噪声比例", "noise_ratio", "塞进上下文的闲聊占比（越低越好）", False)
     row("平均注入条数", "avg_injected_items", "每轮塞几条", False)
     row("平均上下文字数", "avg_context_chars", "省了多少 token", False)

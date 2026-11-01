@@ -227,7 +227,23 @@ def _polarity_conflict(a: str, b: str) -> bool:
     # 0.68 是标定出来的：
     # 「喜欢吃辣的食物」vs「现在不吃辣的食物了」→ 0.71（判矛盾 ✓）
     # 「不喜欢辣」vs「喜欢麻辣烫」→ 0.57（不判矛盾 ✓，两者其实兼容）
-    return similarity(stripped_a, stripped_b) >= 0.68
+    if similarity(stripped_a, stripped_b) >= 0.68:
+        return True
+    # 短句兜底：「喜欢吃辣」vs「吃辣」——
+    # Dice 只有 0.5（差了两个字的分母），够不着 0.68。
+    # 但去掉否定后，短的那个是长的那个的**后缀**，且只差几个字，
+    # 那多半是同一件事换了说法（前面差的是「喜欢」这种修饰）。
+    #
+    # ⚠ 只认后缀、不认前缀：「喜欢辣」vs「喜欢麻辣烫」差在**宾语**上，
+    # 那是两件事，不该判矛盾。
+    shorter, longer = sorted((stripped_a, stripped_b), key=len)
+    if (
+        len(shorter) >= 2
+        and 0 < len(longer) - len(shorter) <= 3
+        and longer.endswith(shorter)
+    ):
+        return True
+    return False
 
 
 class MemoryStore:

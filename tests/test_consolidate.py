@@ -14,6 +14,35 @@ SCOPE = Scope(platform="qq", chat_type="group", chat_id="1")
 DAY = 86400.0
 
 
+class TestPolarityConflict(unittest.TestCase):
+    """否定翻转的判定（内容层的兜底）。
+
+    三元组靠模型自觉，「喜欢吃辣」和「现在不吃辣」很可能填不出一样的
+    subject/predicate，所以还得有一层内容判定。
+    """
+
+    def test_positive_and_negative_versions_conflict(self):
+        from memfade.store import _polarity_conflict
+
+        for a, b in (
+            ("喜欢吃辣", "现在不吃辣"),
+            ("许杏玖喜欢吃辣的食物", "许杏玖现在不吃辣的食物"),
+            ("喜欢吃辣的食物", "现在不吃辣的食物了"),
+        ):
+            self.assertTrue(_polarity_conflict(a, b), "%s vs %s 该判矛盾" % (a, b))
+            self.assertTrue(_polarity_conflict(b, a), "顺序不该影响判定")
+
+    def test_different_objects_do_not_conflict(self):
+        from memfade.store import _polarity_conflict
+
+        for a, b in (
+            ("不喜欢辣", "喜欢麻辣烫"),
+            ("喜欢辣", "喜欢麻辣烫"),
+            ("喜欢猫", "喜欢狗"),
+            ("住在杭州", "住在上海"),
+        ):
+            self.assertFalse(_polarity_conflict(a, b), "%s vs %s 不该判矛盾" % (a, b))
+
 class TestConsolidation(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.engine, self.path, self.config = temp_engine()
@@ -237,6 +266,24 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(new)
         report = await self.engine.consolidate(SCOPE)
         self.assertGreaterEqual(report.superseded, 1, "旧偏好该退场")
+
+    async def test_short_preference_change_supersedes_old(self):
+        """短句版的偏好变化也要抓到。
+
+        「喜欢吃辣」vs「吃辣」（去掉否定后）——Dice 只有 0.5，
+        够不着 0.68 的门槛。靠「短的是长的后缀且只差几个字」补上。
+        """
+
+        old = self.engine.remember(
+            MemoryDraft(content="喜欢吃辣", kind=MemoryKind.PREFERENCE, importance=0.8), SCOPE
+        )
+        new = self.engine.remember(
+            MemoryDraft(content="现在不吃辣", kind=MemoryKind.PREFERENCE, importance=0.8), SCOPE
+        )
+        self.assertIsNotNone(old)
+        self.assertIsNotNone(new)
+        report = await self.engine.consolidate(SCOPE)
+        self.assertGreaterEqual(report.superseded, 1, "短句版的偏好变化也该抓到")
 
     async def test_compatible_preferences_are_not_conflicts(self):
         """「不喜欢辣」与「喜欢麻辣烫」并不矛盾，别误判。"""
