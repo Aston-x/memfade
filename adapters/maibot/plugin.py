@@ -887,6 +887,12 @@ class MemFadePlugin(MaiBotPlugin):
         "承诺、约定、生日、偏好等适合长期保留的信息使用。"
         "一次只记一件事，写成一句话（30 字以内）；"
         "同时给出「谁-怎么样-什么」三段，记忆系统靠它发现互相矛盾的事实。",
+        # ⚠ 必须显式声明 visibility：
+        # 宿主给插件工具的默认可见性是 **deferred**——
+        # 不进 planner 的工具清单，模型得先调 tool_search() 才发现得了。
+        # 「她自然会想到用这个工具」是不靠谱的。
+        # 规则见本机完整版 L5.2（「插件 Tool 默认是延迟发现的」）。
+        visibility="visible",
         parameters={
             "content": {"type": "string", "description": "要记住的内容，一句话，30 字以内", "required": True},
             "subject": {"type": "string", "description": "谁（例：许杏玖）"},

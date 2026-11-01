@@ -58,6 +58,36 @@ class TestWebUIDeclaration(unittest.TestCase):
 
 
 @unittest.skipUnless(HAS_HOST, "未找到 MaiBot 宿主")
+class TestToolVisibility(unittest.TestCase):
+    """插件工具必须显式声明 visibility="visible"。
+
+    宿主给插件工具的默认可见性是 **deferred**——
+    不进 planner 的工具清单，模型得先调 tool_search() 才发现得了。
+    「她自然会想到用这个工具」是不靠谱的（宿主自己的实测结论）。
+    """
+
+    def test_remember_tool_is_visible_to_model(self):
+        from maibot_sdk.components import _COMPONENT_INFO_ATTR
+
+        adapter_dir = REPO_ROOT / "adapters" / "maibot"
+        sys.path.insert(0, str(adapter_dir))
+        import plugin as adapter
+
+        found = None
+        for name in dir(adapter):
+            obj = getattr(adapter, name)
+            if not isinstance(obj, type):
+                continue
+            for attr in dir(obj):
+                fn = getattr(obj, attr, None)
+                info = getattr(fn, _COMPONENT_INFO_ATTR, None)
+                if info is not None and getattr(info, "name", "") == "remember_something":
+                    found = info
+        self.assertIsNotNone(found, "没找到 remember_something 工具声明")
+        self.assertEqual(found.metadata.get("visibility"), "visible")
+
+
+@unittest.skipUnless(HAS_HOST, "未找到 MaiBot 宿主")
 class TestHostItemCompatibility(unittest.IsolatedAsyncioTestCase):
     """记忆块必须能通过宿主自己的反序列化器。
 
