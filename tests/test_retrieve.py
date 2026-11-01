@@ -245,3 +245,44 @@ class TestRetrieval(unittest.TestCase):
             self.engine.remember(draft, SCOPE)
         profile = self.engine.build_profile(SCOPE, max_items=3)
         self.assertLessEqual(len(profile.splitlines()), 3)
+
+    def test_profile_prefers_stable_facts_over_transient(self):
+        """画像是「这个人是谁」，不该被时效性事实挤占。"""
+
+        stable = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
+        transient = MemoryDraft(
+            content="2026年11月1日这周更新里有《牧神记5》",
+            kind=MemoryKind.SEMANTIC,
+            importance=0.9,
+        )
+        self.engine.remember(stable, SCOPE)
+        self.engine.remember(transient, SCOPE)
+        profile = self.engine.build_profile(SCOPE, max_items=1)
+        self.assertIn("许杏玖喜欢辣的食物", profile)
+        self.assertNotIn("牧神记", profile)
+
+    def test_unrelated_recent_memory_is_not_injected(self):
+        """不相关的东西不该进 prompt——这是「总提旧事」的根源。"""
+
+        self.engine.remember(
+            MemoryDraft(content="蓝桥杯报名截止到12月18号", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
+        )
+        # require_match=True：模拟「有向量能力」时的严格模式
+        context = self.engine.build_context("她喜欢吃什么", SCOPE, require_match=True)
+        self.assertEqual(context.text, "", "没有检索命中时不该注入无关记忆")
+
+    def test_lenient_without_embeddings(self):
+        """没有向量能力时不要求词面命中——近义记忆会被误杀。"""
+
+        self.engine.remember(
+            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
+        )
+        context = self.engine.build_context("今天吃什么呢", SCOPE, require_match=False)
+        self.assertIn("许杏玖喜欢吃辣的东西", context.text)
+
+    def test_matched_memory_is_injected(self):
+        self.engine.remember(
+            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
+        )
+        context = self.engine.build_context("她喜欢吃什么", SCOPE)
+        self.assertIn("许杏玖喜欢吃辣的东西", context.text)

@@ -29,12 +29,13 @@ strength 尚在爬坡的记忆会被彻底埋掉。
 from __future__ import annotations
 
 import math
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
 from .config import MemFadeConfig
-from .decay import DEFAULT_POLICY, FadePolicy, effective_strength, resolve_status
+from .decay import DEFAULT_POLICY, FadePolicy, effective_strength, resolve_status, stability_days
 from .store import MemoryStore
 from .textutil import estimate_tokens, fts_text, longest_common_substring, similarity, token_set
 from .types import Memory, MemoryStatus, RetrievalHit
@@ -258,10 +259,16 @@ class MemoryRetriever:
         *,
         header: str = "记忆",
         exclude_ids: Optional[set[int]] = None,
+        require_match: bool = False,
     ) -> MemoryContext:
         """把命中结果分层、限额、渲染成一段可注入的文本。
 
         ``exclude_ids`` 用来避免同一件事在「画像」和「记忆」两块里出现两次。
+
+        ``require_match`` 为真时，只有检索渠道真正命中的记忆才注入。
+        仅在**有语义匹配能力**（向量通道可用）时才该开——
+        没有向量时词面不重叠的近义记忆会被误杀：
+        「今天吃什么呢」和「喜欢吃辣的东西」在词面上毫无交集。
         """
 
         cfg = self.config.retrieval
@@ -274,6 +281,10 @@ class MemoryRetriever:
 
         for hit in self._diversify(hits):
             if hit.memory.id in skip:
+                continue
+            if require_match and hit.relevance < cfg.min_relevance:
+                # 纯靠「最近写入」混进来的候选 relevance=0，
+                # 注入它们就是「总提旧事」——不相关的东西不该进 prompt。
                 continue
             if hit.tier == "fact":
                 line = self._render_fact(hit)
@@ -407,6 +418,14 @@ class MemoryRetriever:
             else:
                 eff = effective_strength(mem, ts, self.policy)
                 score = mem.importance * (0.4 + 0.6 * eff) + 0.05 * mem.recall_count
+                # 画像应该是「这个人是谁」——名字、喜好、忌讳。
+                # 时效性事实（「这周更新里有《牧神记5》」）不该挤占画像位置，
+                # 用稳定性（天数量级）给它降权：事实类约 1~2 倍，事件类约 0.1 倍。
+                score *= min(2.0, stability_days(mem, self.policy) / 30.0)
+                # 同为「事实」但带日期的，是日程而不是画像——
+                # 「2026年11月1日这周更新里有《牧神记5》」过两周就过期了。
+                if _has_time_marker(mem.content):
+                    score *= 0.35
             scored.append((score, mem))
         scored.sort(key=lambda pair: (pair[0], -len(pair[1].content), pair[1].created_at), reverse=True)
 
@@ -439,6 +458,19 @@ def _compose_fact(mem: Memory) -> str:
     if not (mem.subject and mem.predicate and mem.object):
         return ""
     return f"{mem.subject}{mem.predicate}{mem.object}"
+
+
+_TIME_MARKER_RE = re.compile(
+    r"\d{4}\s*年|\d{1,2}\s*月\s*\d{1,2}\s*日|"
+    r"今年|去年|本月|本月|上周|本周|这周|下周|周[一二三四五六日天]|"
+    r"今天|明天|昨天|前天|后天|最近|近期|截止"
+)
+
+
+def _has_time_marker(text: str) -> bool:
+    """判断一条记忆是不是带时效性的（日程、播出表、截止日期）。"""
+
+    return bool(_TIME_MARKER_RE.search(text or ""))
 
 
 def _clip(text: str, limit: int) -> str:

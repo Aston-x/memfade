@@ -268,12 +268,20 @@ class MemoryEngine:
         reinforce: bool = True,
         query_vector: Optional[Sequence[float]] = None,
         exclude_ids: Optional[Sequence[int]] = None,
+        require_match: Optional[bool] = None,
     ) -> MemoryContext:
         """召回 + 分层 + 预算裁剪 + 强化。适配器的常用入口。"""
 
         hits = self.recall(query, scope, now=now, top_k=top_k, query_vector=query_vector)
+        if require_match is None:
+            # 有向量能力时才要求「检索真的命中」——
+            # 否则词面不重叠的近义记忆会被误杀。
+            require_match = self._embed_one is not None
         context = self.retriever.assemble(
-            hits, header=header, exclude_ids=set(exclude_ids or ())
+            hits,
+            header=header,
+            exclude_ids=set(exclude_ids or ()),
+            require_match=require_match,
         )
         if reinforce and context.hits:
             self.reinforce([h.memory.id for h in context.hits], now=now)
