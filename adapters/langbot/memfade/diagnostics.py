@@ -16,6 +16,7 @@ from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from .store import MemoryStore
+from .textutil import clause_count as _clause_count
 from .textutil import normalized_hash, similarity
 
 
@@ -28,9 +29,13 @@ ATOMIC_MAX = 2
 
 
 def clause_count(text: str) -> int:
-    """中文分句计数（按标点切）。"""
+    """中文分句计数（按标点切）。
 
-    return len([p for p in SPLIT_RE.split(text or "") if p.strip()])
+    口径与 ``textutil.clause_count`` 完全一致——体检和拆分必须用同一把尺子，
+    否则会出现「体检说这条塞了几件事，拆分却说拆不动」。
+    """
+
+    return _clause_count(text)
 
 
 def analyze(

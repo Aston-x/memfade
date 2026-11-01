@@ -343,12 +343,26 @@ _BRACKETS = {"（": "）", "(": ")", "【": "】", "[": "]", "「": "」", "『"
 _CLOSERS = set(_BRACKETS.values())
 # 句号级别的分隔符：一句就是一件事。
 _STRONG_SEP = "。！？!?"
-# 逗号级别的分隔符：只是短语之间的停顿。
-_SOFT_SEP = "，,、；;"
+# 逗号级别的分隔符：短语之间的停顿。
+# ⚠ 不含「、」：顿号是**并列项**的分隔符（「科目C/C++、Java、Python」
+# 是一件事），拿它当切分点会把一个清单拆成四段孤零零的词。
+_SOFT_SEP = "，,；;"
+# 硬切时可以用的分隔符（顿号也算，因为它至少不切断一个词）。
+_HARD_SEP = "，,、；;"
 # 冒号单独处理：后面跟数字就不是分隔符（「10:00」「https://」）。
 _COLON = "：:"
 # 归一化（NFKC）会把全角冒号变成半角，所以「10:00」「https://」这类
 # 会被误当成分句点。判断规则：冒号后面跟数字就不是分隔符。
+
+# 「一句话」的判定口径——体检和拆分必须用同一把尺子，
+# 否则体检说「一条记忆塞了几件事」，拆分却拆不动。
+CLAUSE_SPLIT_RE = re.compile(r"[，,；;。！？!?]")
+
+
+def clause_count(text: str) -> int:
+    """一句话里有几个分句（顿号不算并列项）。"""
+
+    return len([p for p in CLAUSE_SPLIT_RE.split(text or "") if p.strip()])
 
 
 def split_atomic(text: str, *, max_chars: int = 40, max_clauses: int = 2) -> list[str]:
@@ -377,16 +391,19 @@ def split_atomic(text: str, *, max_chars: int = 40, max_clauses: int = 2) -> lis
     pieces = _split_outside_brackets(key)
     facts: list[str] = []
     buf = ""
-    for piece in pieces:
-        candidate = (buf + "，" + piece) if buf else piece
+    buf_sep = ""
+    for piece, sep in pieces:
+        candidate = (buf + buf_sep + piece) if buf else piece
         if len(candidate) <= max_chars and _count_clauses(candidate) <= max_clauses:
             buf = candidate
+            buf_sep = sep
             continue
         if buf:
             facts.append(buf)
             buf = ""
         if len(piece) <= max_chars:
             buf = piece
+            buf_sep = sep
         else:
             # 单个分句本身就超长 → 只能硬切，切点尽量落在分隔符上
             for part in _hard_split(piece, max_chars):
@@ -397,19 +414,19 @@ def split_atomic(text: str, *, max_chars: int = 40, max_clauses: int = 2) -> lis
 
 
 def _count_clauses(text: str) -> int:
-    """分句数（只算句号级别的分隔符）。
+    """分句数。口径与体检完全一致（见 ``clause_count``）。"""
 
-    逗号不计入：「软件赛科目C/C++，Java，Python，Web应用开发」是**一件事**
-    （一门课的科目列表），不是四件事。
-    """
-
-    return len([p for p in re.split("[" + re.escape(_STRONG_SEP) + "]", text) if p.strip()])
+    return clause_count(text)
 
 
 def _split_outside_brackets(text: str) -> list[str]:
-    """按标点切，但括号/引号里面的标点不算，冒号后面是数字也不算。"""
+    """按标点切，但括号/引号里面的标点不算，冒号后面是数字也不算。
 
-    out: list[str] = []
+    返回 ``[(片段, 片段后面的分隔符)]``——分隔符要跟着走，
+    合并回去时才能还原原来的标点（把「；」还原成「，」会改掉语气）。
+    """
+
+    out: list[tuple[str, str]] = []
     buf: list[str] = []
     stack: list[str] = []
     for index, ch in enumerate(text):
@@ -422,13 +439,13 @@ def _split_outside_brackets(text: str) -> list[str]:
         if not stack and (ch in _STRONG_SEP or ch in _SOFT_SEP or is_colon):
             piece = "".join(buf).strip()
             if piece:
-                out.append(piece)
+                out.append((piece, ch))
             buf = []
             continue
         buf.append(ch)
     tail = "".join(buf).strip()
     if tail:
-        out.append(tail)
+        out.append((tail, ""))
     return out
 
 
@@ -443,7 +460,7 @@ def _hard_split(text: str, limit: int) -> list[str]:
         window = rest[: limit + 1]
         # 只在标点处切，绝不从数字/时间中间劈开
         # （「考4小时9:00-13:00」从中间切会变成「考4小时9」和「00-13:00」）。
-        cut = max(window.rfind(sep) for sep in _SOFT_SEP)
+        cut = max(window.rfind(sep) for sep in _HARD_SEP)
         if cut < limit // 2:
             cut = limit
         else:

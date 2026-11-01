@@ -332,6 +332,89 @@ def split_via_host(
     return asyncio.run(_run())
 
 
+def fill_triples_via_host(
+    texts: List[str],
+    host_root: str,
+    chunk_size: int = 8,
+    max_tokens: int = 4000,
+) -> List[Dict[str, str]]:
+    """给一批已经拆好的事实补三元组。
+
+    与 ``split_via_host`` 分开是有意的：
+
+    * **拆**是长文本 → 多条事实，输出大、模型要想很久，容易超时；
+    * **补三元组**是一条事实 → 三个短字段，输出小，13 秒就完事。
+
+    所以正确的顺序是：先用本地规则拆（确定、免费、不丢字），
+    再让模型给拆好的碎片补三元组。
+
+    返回与 ``texts`` 等长的列表，每项是
+    ``{"subject": ..., "predicate": ..., "object": ...}``；
+    模型没给的就留空字符串——空三元组不影响检索，
+    矛盾检测还有内容兜底那条路。
+    """
+
+    import asyncio
+
+    if host_root and host_root not in sys.path:
+        sys.path.insert(0, host_root)
+    from src.services import llm_service  # type: ignore
+
+    from memfade.extract import TRIPLE_PROMPT, parse_json_block
+
+    empty = {"subject": "", "predicate": "", "object": ""}
+
+    async def _run() -> List[Dict[str, str]]:
+        out: List[Dict[str, str]] = []
+        for start in range(0, len(texts), chunk_size):
+            chunk = texts[start : start + chunk_size]
+            out.extend(await _run_chunk(chunk))
+        return out
+
+    async def _run_chunk(chunk: List[str]) -> List[Dict[str, str]]:
+        try:
+            return await _one_batch(chunk)
+        except Exception as exc:
+            if len(chunk) > 1:
+                mid = len(chunk) // 2
+                return (await _run_chunk(chunk[:mid])) + (await _run_chunk(chunk[mid:]))
+            print(f"  ! 补三元组失败（{len(chunk)} 条）：{exc}")
+            return [dict(empty) for _ in chunk]
+
+    async def _one_batch(chunk: List[str]) -> List[Dict[str, str]]:
+        prompt = TRIPLE_PROMPT.format(facts="\n".join(f"- {t}" for t in chunk))
+        request = llm_service.LLMServiceRequest(
+            task_name="memory",
+            request_type="memfade.triples",
+            prompt=prompt,
+            temperature=0.1,
+            max_tokens=max_tokens,
+        )
+        result = await llm_service.generate(request)
+        payload = result.to_capability_payload()
+        raw = str(payload.get("response") or "")
+        items = parse_json_block(raw)
+        if not isinstance(items, list) or not items:
+            raise RuntimeError("模型没有返回可解析的 JSON 数组")
+
+        by_index: Dict[int, Dict[str, str]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            try:
+                index = int(item.get("index"))
+            except (TypeError, ValueError):
+                continue
+            by_index[index] = {
+                "subject": str(item.get("subject") or "").strip(),
+                "predicate": str(item.get("predicate") or "").strip(),
+                "object": str(item.get("object") or "").strip(),
+            }
+        return [by_index.get(i, dict(empty)) for i in range(len(chunk))]
+
+    return asyncio.run(_run())
+
+
 def read_webui_token(config_path: str) -> str:
     """从 MaiBot 的 data/webui.json 里读 WebUI 令牌。"""
 

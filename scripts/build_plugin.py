@@ -59,6 +59,12 @@ def deploy(target: Path, plugins_dir: Path) -> Path:
     """
 
     dst = plugins_dir / "memfade-plugin"
+    # ⚠ 宿主上的 config.toml 是**现场配置**（改过的阈值、开关都在里面），
+    # 仓库里那份只是模板。直接覆盖等于把用户的设置抹了。
+    saved_config = None
+    live_config = dst / "config.toml"
+    if live_config.exists():
+        saved_config = live_config.read_text(encoding="utf-8")
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(
@@ -66,6 +72,9 @@ def deploy(target: Path, plugins_dir: Path) -> Path:
         dst,
         ignore=shutil.ignore_patterns(*IGNORED, "*.pyc"),
     )
+    if saved_config is not None:
+        live_config.write_text(saved_config, encoding="utf-8")
+        print(f"[build] 已保留宿主上的 config.toml")
     print(f"[build] 已部署到 {dst}")
     return dst
 

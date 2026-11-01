@@ -22,7 +22,7 @@ import os
 import sqlite3
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -31,8 +31,12 @@ if REPO_ROOT not in sys.path:
 from memfade.diagnostics import clause_count  # noqa: E402
 from memfade.textutil import fts_text, normalized_hash, split_atomic  # noqa: E402
 
+# 「一件事一条」的两把尺子：单条不超过这么多字、这么多分句。
+MAX_CHARS = 40
+MAX_CLAUSES = 2
 
-def find_bad(db_path: str, *, max_chars: int = 40, max_clauses: int = 2) -> List[Dict[str, Any]]:
+
+def find_bad(db_path: str, *, max_chars: int = MAX_CHARS, max_clauses: int = MAX_CLAUSES) -> List[Dict[str, Any]]:
     """找出需要重整的条目。"""
 
     conn = sqlite3.connect(db_path, timeout=30)
@@ -80,8 +84,9 @@ def main() -> int:
     parser.add_argument(
         "--use-llm",
         action="store_true",
-        help="先让宿主 LLM 拆（能顺便补三元组，但慢且可能超时）；默认只用本地规则",
+        help="让宿主 LLM 给拆好的碎片补三元组（快）；拆分本身永远用本地规则",
     )
+    parser.add_argument("--triple-chunk", type=int, default=8, help="每次问模型几条")
     args = parser.parse_args()
 
     bad = find_bad(args.db)
@@ -97,23 +102,36 @@ def main() -> int:
         return 0
 
     # 默认走**本地规则拆分**：快、稳、不花钱、一个字都不会丢。
-    # 想让模型顺便补三元组就加 --use-llm（但要能忍它的 thinking）。
-    groups: List[List[Dict[str, Any]]] = []
-    if args.use_llm:
-        if not args.host_root:
-            print("\n--use-llm 需要 --host-root（MaiBot 根目录，用来调用它的 LLM 服务）")
-            return 1
-        from scripts.import_a_memorix import split_via_host
-
-        print(f"\n用宿主 LLM 规范化 {len(bad)} 条…")
-        groups = split_via_host(
-            [item["content"] for item in bad], args.host_root, chunk_size=args.chunk_size
+    # 模型只用来**补三元组**——那是小输出，13 秒就完事；
+    # 让模型直接拆长文本反而会 thinking 到超时（实测 84s 空输出 / 240s 硬超时）。
+    plan: List[Tuple[Dict[str, Any], List[Dict[str, Any]]]] = []
+    for item in bad:
+        reasons = item["reasons"]
+        too_long = any(r.startswith("超过") for r in reasons)
+        too_many = any(r.startswith("多于") for r in reasons)
+        pieces = split_atomic(item["content"], max_chars=args.max_chars)
+        # 拆了之后每条都要真的变好：长度达标、分句达标。
+        # 只在「太长」或「塞了太多句」时才拆，拆完再跑一遍不会变。
+        improved = len(pieces) > 1 and all(
+            len(p) <= args.max_chars and clause_count(p) <= MAX_CLAUSES for p in pieces
         )
-        if len(groups) != len(bad):
-            print(f"⚠ 拆解返回 {len(groups)} 条，与输入 {len(bad)} 条对不上，放弃写库")
-            return 1
-    else:
-        groups = [[] for _ in bad]
+        if (too_long or too_many) and improved:
+            facts = [{"content": p, "subject": "", "predicate": "", "object": ""} for p in pieces]
+        else:
+            # 内容不动，只补三元组
+            facts = [
+                {
+                    "content": item["content"],
+                    "subject": item["subject"] or "",
+                    "predicate": item["predicate"] or "",
+                    "object": item["object"] or "",
+                }
+            ]
+        plan.append((item, facts))
+
+    if args.use_llm and not args.host_root:
+        print("\n--use-llm 需要 --host-root（MaiBot 根目录，用来调用它的 LLM 服务）")
+        return 1
 
     conn = sqlite3.connect(args.db, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -123,24 +141,54 @@ def main() -> int:
         deleted = 0
         inserted = 0
         kept = 0
-        local_split = 0
+        updated = 0
+        split_count = 0
         now = time.time()
-        for item, facts in zip(bad, groups):
-            if not facts:
-                # 模型没拆开 → 本地按标点拆。
-                # 规则拆分不如模型懂语义，但至少保证「一条一件事、一条不太长」，
-                # 而且**一个字都不会丢**。
-                pieces = split_atomic(item["content"], max_chars=args.max_chars)
-                if len(pieces) > 1:
-                    facts = [{"content": p, "subject": "", "predicate": "", "object": ""} for p in pieces]
-                    local_split += 1
-                else:
-                    # 真的拆不动就别动：保留原条目。
-                    # 「删掉旧的、塞回一样的」等于把记忆改坏——还丢了三元组。
-                    kept += 1
-                    continue
+
+        # 拆完之后统一让模型补三元组：一次请求一批，快。
+        triples: Dict[int, Dict[str, str]] = {}
+        if args.use_llm:
+            from scripts.import_a_memorix import fill_triples_via_host
+
+            pending: List[str] = []
+            owner: List[int] = []
+            for gi, (_item, facts) in enumerate(plan):
+                for fi, fact in enumerate(facts):
+                    if fact["subject"] and fact["predicate"]:
+                        continue
+                    pending.append(fact["content"])
+                    owner.append(gi * 1000 + fi)
+            if pending:
+                print(f"让宿主 LLM 给 {len(pending)} 条补三元组…")
+                filled = fill_triples_via_host(
+                    pending, args.host_root, chunk_size=args.triple_chunk
+                )
+                for key, value in zip(owner, filled):
+                    triples[key] = value
+
+        for gi, (item, facts) in enumerate(plan):
+            if len(facts) == 1 and facts[0]["content"] == item["content"]:
+                # 内容没变 → 只更新三元组。
+                # 不删了重插：那样会换掉 id，也丢掉 recall_count 和创建时间。
+                triple = triples.get(gi * 1000, {})
+                subject = triple.get("subject") or item["subject"] or ""
+                predicate = triple.get("predicate") or item["predicate"] or ""
+                object_ = triple.get("object") or item["object"] or ""
+                if subject and predicate and (subject, predicate, object_) != (
+                    item["subject"],
+                    item["predicate"],
+                    item["object"],
+                ):
+                    conn.execute(
+                        "UPDATE memories SET subject=?, predicate=?, object=?, updated_at=? WHERE id=?",
+                        (subject, predicate, object_, now, item["id"]),
+                    )
+                    updated += 1
+                continue
+            split_count += 1
             deleted += conn.execute("DELETE FROM memories WHERE id=?", (item["id"],)).rowcount
-            for entry in facts:
+            for fi, entry in enumerate(facts):
+                triple = triples.get(gi * 1000 + fi, {})
                 data = {
                     "scope_key": item["scope_key"],
                     "kind": _kind_of(entry["content"]),
@@ -156,9 +204,9 @@ def main() -> int:
                     "recall_count": 0,
                     "pinned": 0,
                     "cross_scope": 0,
-                    "subject": entry.get("subject", ""),
-                    "predicate": entry.get("predicate", ""),
-                    "object": entry.get("object", ""),
+                    "subject": triple.get("subject") or entry.get("subject", ""),
+                    "predicate": triple.get("predicate") or entry.get("predicate", ""),
+                    "object": triple.get("object") or entry.get("object", ""),
                     "source": "renormalize",
                     "superseded_by": None,
                     "content_hash": normalized_hash(entry["content"]),
@@ -176,11 +224,9 @@ def main() -> int:
                 )
                 inserted += 1
         conn.commit()
-        print(f"删掉旧条目 {deleted} 条，写入新条目 {inserted} 条")
-        if local_split:
-            print(f"（其中 {local_split} 条是本地规则拆的，模型没给出结果）")
-        if kept:
-            print(f"⚠ 有 {kept} 条没拆开，原样保留（下次整理再试）")
+        print(f"拆开 {split_count} 条长记忆：删掉旧条目 {deleted} 条，写入新条目 {inserted} 条")
+        if updated:
+            print(f"给 {updated} 条补上了三元组（内容没动）")
     finally:
         conn.close()
     return 0

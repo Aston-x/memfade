@@ -43,8 +43,10 @@ if _HERE not in sys.path:
 
 try:  # pragma: no cover - 取决于部署形态
     from memfade import MemoryDraft, MemoryEngine, MemoryKind, MemFadeConfig, Scope
+    from memfade.textutil import split_atomic
 except ImportError:  # pragma: no cover
     from memfade import MemoryDraft, MemoryEngine, MemoryKind, MemFadeConfig, Scope
+    from memfade.textutil import split_atomic
 
 
 PLUGIN_ID = "memfade.memory"
@@ -827,17 +829,30 @@ class MemFadePlugin(MaiBotPlugin):
         if engine is None or not content:
             return False, "没听清要记住什么", 1
         scope = self._scope_from_kwargs(kwargs)
-        draft = MemoryDraft(
-            content=content,
-            kind=MemoryKind.SEMANTIC,
-            importance=0.95,
-            cross_scope=bool(self.config.memory.cross_session),
-            source="command",
-        )
-        memory = engine.remember(draft, scope)
-        if memory is None:
+        # 一段话塞进一条记忆，等于一颗炸弹：注入时只能截断，
+        # 矛盾检测也抓不住。按标点拆成「一件事一条」再记。
+        pieces = split_atomic(content, max_chars=40)
+        written: List[str] = []
+        for piece in pieces:
+            draft = MemoryDraft(
+                content=piece,
+                kind=MemoryKind.SEMANTIC,
+                importance=0.95,
+                cross_scope=bool(self.config.memory.cross_session),
+                source="command",
+            )
+            memory = engine.remember(draft, scope)
+            if memory is not None:
+                written.append(memory.content)
+        if not written:
             return False, "没记下来（可能被判定为不重要或重复）", 1
-        await self.ctx.send.text(f"记住了：{memory.content}", stream_id)
+        if len(written) == 1:
+            await self.ctx.send.text(f"记住了：{written[0]}", stream_id)
+        else:
+            await self.ctx.send.text(
+                "记住了这 %d 件事：\n%s" % (len(written), "\n".join("- " + w for w in written)),
+                stream_id,
+            )
         return True, "已记住", 0
 
     @Command(

@@ -122,6 +122,20 @@ CANONICALIZE_SPLIT_PROMPT = (
     "{facts}"
 )
 
+TRIPLE_PROMPT = (
+    "给下面每一条事实补上三元组 (谁, 怎么样, 什么)。\n"
+    "\n"
+    "规则：\n"
+    "1. subject 填主语（人名或事件名），predicate 填动宾短语（6 字以内），\n"
+    "   object 填宾语。\n"
+    "2. 一条对应一条输出，顺序一致，不要合并、不要拆分。\n"
+    "3. 只输出 JSON 数组，不要解释。\n"
+    "\n"
+    "事实：\n"
+    "{facts}\n"
+    '\n输出：[{{"index":0,"subject":"...","predicate":"...","object":"..."}}]'
+)
+
 
 @dataclass
 class ExtractionResult:

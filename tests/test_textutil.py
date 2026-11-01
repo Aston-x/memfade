@@ -38,9 +38,21 @@ class TestSplitAtomic(unittest.TestCase):
 
         text = "季怡在做小红书账号，发AI绘画内容，目标是靠流量赚钱；10月起零关注零粉丝。"
         parts = split_atomic(text)
-        stripped = "".join(parts).replace("，", "").replace("。", "")
-        original = text.replace("，", "").replace("。", "").replace("；", "")
+        # 分隔符会被保留，所以两边都按同一套规则去掉分隔符再比。
+        seps = "，,。；;、：:"
+        stripped = "".join(parts)
+        original = text
+        for sep in seps:
+            stripped = stripped.replace(sep, "")
+            original = original.replace(sep, "")
         self.assertEqual(stripped, original)
+
+    def test_keeps_list_separator(self):
+        """顿号是并列项的分隔符，不能当切分点。"""
+
+        parts = split_atomic("软件赛科目C/C++、Java、Python、Web应用开发")
+        self.assertEqual(len(parts), 1)
+        self.assertIn("、", parts[0])
 
     def test_does_not_split_inside_quotes(self):
         """引号里的逗号不是分句点。"""
