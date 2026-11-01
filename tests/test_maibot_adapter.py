@@ -15,6 +15,8 @@ import unittest
 from pathlib import Path
 from typing import Any, Dict, List
 
+from memfade.types import MemoryDraft, MemoryKind, Scope
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -325,6 +327,23 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parsed["chat_type"], "group")
         self.assertEqual(parsed["group_id"], "1127155154")
         self.assertEqual(parsed["session_id"], "sess-1")
+
+    async def test_existing_scopes_are_recovered_on_load(self):
+        """插件重启后，库里已有的会话要重新进入「已知会话」。
+
+        不恢复的话，那些没再发过消息的会话就再没人整理了——
+        gist 压缩、合并、淘汰都靠整理任务做。
+        """
+
+        engine = self.plugin._engine
+        engine.remember(
+            MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9),
+            Scope(platform="qq", chat_type="session", chat_id="old-scope"),
+        )
+        # 模拟重启：清空已知会话后重建引擎
+        self.plugin._scopes.clear()
+        self.plugin._rebuild_engine()
+        self.assertIn("qq:session:old-scope", self.plugin._scopes)
 
     async def test_scope_parsing_private(self):
         from adapters.maibot.plugin import MemFadePlugin
