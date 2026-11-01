@@ -95,6 +95,19 @@ class ConsolidationService:
         report.purged += self._purge_pass(ts)
         return report
 
+    def _scope_keys(self, scope_key: Optional[str]) -> List[str]:
+        """要整理的作用域列表。
+
+        ⚠ 没指定作用域时（WebUI 的「整理」按钮、命令行 `fade`），
+        矛盾仲裁必须**按作用域逐个跑**。
+        仲裁是「同一会话里两条事实打架」，跨会话比是另一回事——
+        把所有会话混在一起比，会把不同人的「住在上海」「住在杭州」当成矛盾。
+        """
+
+        if scope_key:
+            return [scope_key]
+        return [str(row[0]) for row in self.store.scope_counts()]
+
     def _load(self, scope_key: Optional[str], limit: int) -> list[Memory]:
         if scope_key:
             return self.store.iter_scope(scope_key, statuses=("active", "fading", "gisted"), limit=limit)
@@ -161,12 +174,20 @@ class ConsolidationService:
         """合并近似重复。"""
 
         merged = 0
-        if scope_key:
-            candidates = self.store.iter_scope(
-                scope_key, statuses=("active", "fading", "gisted"), limit=2000
-            )
-        else:
-            candidates = self.store.iter_maintenance(limit=2000)
+        # ⚠ 必须**按作用域分别合并**。
+        # 跨会话合并会把 A 会话的内容并进 B 会话——
+        # 那是隔离性彻底破掉，比「多几条重复」严重得多。
+        for key in self._scope_keys(scope_key):
+            merged += self._merge_scope(key, report)
+        return merged
+
+    def _merge_scope(self, scope_key: str, report: ConsolidationReport) -> int:
+        """合并一个作用域内的近似重复。"""
+
+        merged = 0
+        candidates = self.store.iter_scope(
+            scope_key, statuses=("active", "fading", "gisted"), limit=2000
+        )
         for a, b in find_duplicates(candidates, threshold=self.config.retrieval.merge_threshold):
             survivor = choose_survivor(a, b)
             loser = b if survivor is a else a
@@ -182,17 +203,16 @@ class ConsolidationService:
     def _supersede_pass(self, scope_key: Optional[str]) -> int:
         """矛盾仲裁：新事实取代旧事实。"""
 
-        if not scope_key:
-            return 0
         count = 0
-        for older, newer in self.store.find_conflicts(scope_key):
-            if older.id == newer.id:
-                continue
-            try:
-                self.store.mark_superseded(older.id, newer.id)
-                count += 1
-            except Exception:
-                continue
+        for key in self._scope_keys(scope_key):
+            for older, newer in self.store.find_conflicts(key):
+                if older.id == newer.id:
+                    continue
+                try:
+                    self.store.mark_superseded(older.id, newer.id)
+                    count += 1
+                except Exception:
+                    continue
         return count
 
     def _purge_pass(self, now: float) -> int:
@@ -215,8 +235,18 @@ class ConsolidationService:
         置顶的、以及被反复提起过的，不动。
         """
 
+        removed = 0
+        # 同样要按作用域分别算：「每个会话最多留 N 条」是**每个会话**的上限，
+        # 不是全库上限。没指定作用域时不跑这一遍，库就只涨不消。
+        for key in self._scope_keys(scope_key):
+            removed += self._trim_scope(key)
+        return removed
+
+    def _trim_scope(self, scope_key: str) -> int:
+        """一个作用域内超出上限时淘汰最弱的记忆。"""
+
         cap = int(self.config.maintenance.max_memories_per_scope)
-        if cap <= 0 or not scope_key:
+        if cap <= 0:
             return 0
         memories = self.store.iter_scope(scope_key, limit=cap * 4 + 1000)
         if len(memories) <= cap:
