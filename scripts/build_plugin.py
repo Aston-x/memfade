@@ -23,8 +23,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CORE_DIR = REPO_ROOT / "memfade"
+# 每个适配器都要自带一份核心源码——宿主不一定装得��� memfade 这个包，
+# 插件目录必须自包含。目录布局各不相同，见各适配器的 _bootstrap_import。
 ADAPTERS = {
     "maibot": REPO_ROOT / "adapters" / "maibot",
+    "langbot": REPO_ROOT / "adapters" / "langbot",
+    "astrbot": REPO_ROOT / "adapters" / "astrbot",
+    "nonebot2": REPO_ROOT / "adapters" / "nonebot2" / "src",
 }
 IGNORED = {"__pycache__", ".pytest_cache", ".mypy_cache"}
 

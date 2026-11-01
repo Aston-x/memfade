@@ -26,7 +26,17 @@ except Exception:  # pragma: no cover
     HAS_SDK = False
 
 MAIBOT_ROOT = Path(r"G:\AI\许杏玖-MaiBot\MaiBot")
-HAS_HOST = MAIBOT_ROOT.is_dir() and (MAIBOT_ROOT / "src" / "plugin_runtime" / "webui_schema.py").is_file()
+if MAIBOT_ROOT.is_dir() and str(MAIBOT_ROOT) not in sys.path:
+    sys.path.insert(0, str(MAIBOT_ROOT))
+try:
+    # 宿主的一堆依赖（sqlmodel 等）只在 MaiBot 自己的 venv 里齐，
+    # 所以这里直接试导入，而不是只看文件在不在。
+    from src.plugin_runtime.hook_payloads import deserialize_prompt_items as _probe  # noqa: F401
+    from src.plugin_runtime.webui_schema import load_webui_extension as _probe2  # noqa: F401
+
+    HAS_HOST = True
+except Exception:  # pragma: no cover
+    HAS_HOST = False
 
 
 @unittest.skipUnless(HAS_HOST, "未找到 MaiBot 宿主")

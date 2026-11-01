@@ -13,7 +13,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CORE = REPO_ROOT / "memfade"
-VENDORED = REPO_ROOT / "adapters" / "maibot" / "memfade"
+VENDORED_DIRS = [
+    REPO_ROOT / "adapters" / "maibot" / "memfade",
+    REPO_ROOT / "adapters" / "langbot" / "memfade",
+    REPO_ROOT / "adapters" / "astrbot" / "memfade",
+    REPO_ROOT / "adapters" / "nonebot2" / "src" / "memfade",
+]
 
 
 def _files(root: Path) -> set:
@@ -26,18 +31,24 @@ def _files(root: Path) -> set:
 
 class TestVendoredSync(unittest.TestCase):
     def test_same_file_set(self):
-        self.assertTrue(VENDORED.is_dir(), "适配器目录里应该有一份核心副本（跑 scripts/build_plugin.py 生成）")
-        self.assertEqual(_files(CORE), _files(VENDORED), "核心副本的文件清单与源目录不一致")
+        for vendored in VENDORED_DIRS:
+            with self.subTest(dir=str(vendored)):
+                self.assertTrue(
+                    vendored.is_dir(),
+                    "适配器目录里应该有一份核心副本（跑 scripts/build_plugin.py 生成）",
+                )
+                self.assertEqual(_files(CORE), _files(vendored), "核心副本的文件清单与源目录不一致")
 
     def test_same_content(self):
-        if not VENDORED.is_dir():
-            self.skipTest("没有 vendored 副本")
-        for rel in sorted(_files(CORE)):
-            with self.subTest(rel=rel):
-                self.assertTrue(
-                    filecmp.cmp(CORE / rel, VENDORED / rel, shallow=False),
-                    f"{rel} 与源目录不一致，跑 scripts/build_plugin.py 同步",
-                )
+        for vendored in VENDORED_DIRS:
+            if not vendored.is_dir():
+                continue
+            for rel in sorted(_files(CORE)):
+                with self.subTest(dir=vendored.name, rel=rel):
+                    self.assertTrue(
+                        filecmp.cmp(CORE / rel, vendored / rel, shallow=False),
+                        f"{rel} 与源目录不一致，跑 scripts/build_plugin.py 同步",
+                    )
 
 
 if __name__ == "__main__":
