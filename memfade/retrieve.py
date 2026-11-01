@@ -57,6 +57,14 @@ class MemoryContext:
         return bool(self.facts or self.echoes)
 
 
+@dataclass
+class ProfileBlock:
+    """「关于对方」的稳定事实块，以及它包含的记忆 id。"""
+
+    text: str = ""
+    ids: tuple[int, ...] = ()
+
+
 class MemoryRetriever:
     """召回 + 打分 + 组装。"""
 
@@ -209,16 +217,23 @@ class MemoryRetriever:
         hits: Sequence[RetrievalHit],
         *,
         header: str = "记忆",
+        exclude_ids: Optional[set[int]] = None,
     ) -> MemoryContext:
-        """把命中结果分层、限额、渲染成一段可注入的文本。"""
+        """把命中结果分层、限额、渲染成一段可注入的文本。
+
+        ``exclude_ids`` 用来避免同一件事在「画像」和「记忆」两块里出现两次。
+        """
 
         cfg = self.config.retrieval
         context = MemoryContext()
         used = 0
         fact_lines: list[str] = []
         echo_lines: list[str] = []
+        skip = exclude_ids or set()
 
         for hit in hits:
+            if hit.memory.id in skip:
+                continue
             if hit.tier == "fact":
                 line = self._render_fact(hit)
                 cost = estimate_tokens(line)
@@ -255,12 +270,12 @@ class MemoryRetriever:
         composed = _compose_fact(mem)
         if composed:
             body = composed
-        return f"- {body}"
+        return f"- {_clip(body, self.config.retrieval.max_item_chars)}"
 
     def _render_echo(self, hit: RetrievalHit) -> str:
         mem = hit.memory
         body = mem.summary.strip() or mem.content.strip()
-        return f"- （可能已经变了，仅供参考）{body}"
+        return f"- （可能已经变了，仅供参考）{_clip(body, self.config.retrieval.max_item_chars)}"
 
     def build_profile(
         self,
@@ -271,6 +286,25 @@ class MemoryRetriever:
         max_chars: int = 400,
         kinds: Optional[Sequence[str]] = None,
     ) -> str:
+        """构建「关于对方」的稳定事实块（只要文本）。"""
+
+        return self.profile(
+            scope_key,
+            now=now,
+            max_items=max_items,
+            max_chars=max_chars,
+            kinds=kinds,
+        ).text
+
+    def profile(
+        self,
+        scope_key: str,
+        *,
+        now: Optional[float] = None,
+        max_items: int = 8,
+        max_chars: int = 400,
+        kinds: Optional[Sequence[str]] = None,
+    ) -> ProfileBlock:
         """构建「关于对方」的稳定事实块。
 
         与检索召回是两回事：检索靠**这次问了什么**，
@@ -297,22 +331,29 @@ class MemoryRetriever:
                 eff = effective_strength(mem, ts, self.policy)
                 score = mem.importance * (0.4 + 0.6 * eff) + 0.05 * mem.recall_count
             scored.append((score, mem))
-        scored.sort(key=lambda pair: (pair[0], pair[1].created_at), reverse=True)
+        scored.sort(key=lambda pair: (pair[0], -len(pair[1].content), pair[1].created_at), reverse=True)
 
         lines: list[str] = []
+        used_ids: list[int] = []
         used = 0
+        # 画像是「这个人是谁」——名字、喜好、忌讳。
+        # 几百字的百科段落不属于画像，它属于记忆块。
+        max_len = self.config.retrieval.max_profile_chars * 2
         for _, mem in scored:
             if len(lines) >= max_items:
                 break
-            body = mem.content.strip()
+            if len(mem.content) > max_len:
+                continue
+            body = _clip(mem.content.strip(), self.config.retrieval.max_profile_chars)
             if not body:
                 continue
             line = f"- {body}"
             if used + len(line) > max_chars:
                 break
             lines.append(line)
+            used_ids.append(mem.id)
             used += len(line)
-        return "\n".join(lines)
+        return ProfileBlock(text="\n".join(lines), ids=tuple(used_ids))
 
 
 def _compose_fact(mem: Memory) -> str:
@@ -321,4 +362,19 @@ def _compose_fact(mem: Memory) -> str:
     if not (mem.subject and mem.predicate and mem.object):
         return ""
     return f"{mem.subject}{mem.predicate}{mem.object}"
+
+
+def _clip(text: str, limit: int) -> str:
+    """按字符截断，超长时补省略号。
+
+    单条记忆可能有几百字（比如一段赛制说明），
+    整段塞进 prompt 既费 token 又淹掉其它记忆。
+    """
+
+    if limit <= 0:
+        return ""
+    body = (text or "").strip()
+    if len(body) <= limit:
+        return body
+    return body[: max(1, limit - 1)].rstrip("，,、；; ") + "…"
 

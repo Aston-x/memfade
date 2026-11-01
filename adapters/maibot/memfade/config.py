@@ -70,6 +70,13 @@ class RetrievalConfig:
     echo_max: int = 3
     """回声层最多注入几条淡化记忆。"""
 
+    max_item_chars: int = 120
+    """单条记忆注入时的字数上限。超长截断——一段赛制说明塞进 prompt
+    既费 token 又会淹掉其它记忆。"""
+
+    max_profile_chars: int = 60
+    """画像块里单条的字数上限。画像应该是短句（名字、喜好、忌讳）。"""
+
     echo_min_relevance: float = 0.35
     """回声层要求的最低文本相关度——只有被直接问起才带出来。"""
 

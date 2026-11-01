@@ -226,11 +226,14 @@ class MemoryEngine:
         header: str = "记忆",
         reinforce: bool = True,
         query_vector: Optional[Sequence[float]] = None,
+        exclude_ids: Optional[Sequence[int]] = None,
     ) -> MemoryContext:
         """召回 + 分层 + 预算裁剪 + 强化。适配器的常用入口。"""
 
         hits = self.recall(query, scope, now=now, top_k=top_k, query_vector=query_vector)
-        context = self.retriever.assemble(hits, header=header)
+        context = self.retriever.assemble(
+            hits, header=header, exclude_ids=set(exclude_ids or ())
+        )
         if reinforce and context.hits:
             self.reinforce([h.memory.id for h in context.hits], now=now)
         return context

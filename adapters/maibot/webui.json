@@ -19,6 +19,16 @@
           "api": "memfade_consolidate",
           "version": "1",
           "confirmation": "确认现在就跑一轮记忆整理？会重算淡化档位、压缩旧记忆、合并重复。"
+        },
+        "selfcheck": {
+          "api": "memfade_selfcheck",
+          "version": "1",
+          "parameters": {
+            "query": {
+              "type": "string",
+              "max_length": 200
+            }
+          }
         }
       },
       "content": [
@@ -114,6 +124,17 @@
           "label": "立即整理一轮",
           "action": "consolidate",
           "variant": "primary"
+        },
+        {
+          "type": "input",
+          "name": "query",
+          "label": "自检用的检索词",
+          "value": "今天吃什么"
+        },
+        {
+          "type": "button",
+          "label": "自检注入流程",
+          "action": "selfcheck"
         }
       ]
     },

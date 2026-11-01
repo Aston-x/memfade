@@ -377,12 +377,11 @@ class MemFadePlugin(MaiBotPlugin):
         error_policy=ErrorPolicy.SKIP,
     )
     async def handle_planner_before_request(
-        self, items: Any = None, session_id: str = "", **kwargs: Any
+        self, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         """规划器发起模型请求前注入记忆。"""
 
-        del kwargs
-        return await self._inject_into_items(items, session_id)
+        return await self._inject_into_items(kwargs)
 
     @HookHandler(
         "maisaka.replyer.before_model_request",
@@ -393,14 +392,13 @@ class MemFadePlugin(MaiBotPlugin):
         error_policy=ErrorPolicy.SKIP,
     )
     async def handle_replyer_before_model_request(
-        self, items: Any = None, session_id: str = "", **kwargs: Any
+        self, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
         """回复器发起模型请求前注入记忆。"""
 
-        del kwargs
-        return await self._inject_into_items(items, session_id)
+        return await self._inject_into_items(kwargs)
 
-    async def _inject_into_items(self, items: Any, session_id: str) -> Optional[Dict[str, Any]]:
+    async def _inject_into_items(self, kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """把召回的记忆写进 Context Items。
 
         为什么用 ``maisaka.*.before_request`` 而不是 ``chat.receive.after_process``：
@@ -419,33 +417,50 @@ class MemFadePlugin(MaiBotPlugin):
             return None
         if not self.config.memory.inject_enabled:
             return None
+        items = kwargs.get("items")
         if not isinstance(items, list) or not items:
             return None
+        session_id = str(kwargs.get("session_id") or "")
         query = self._last_user_text(items)
         scope = Scope(platform="qq", chat_type="session", chat_id=str(session_id or "unknown"))
         try:
             vector = None
             if self.config.memory.use_host_embedding:
                 vector = await engine.embed_query(query)
+            profile = engine.retriever.profile(
+                scope.key(),
+                max_items=max(0, int(self.config.memory.profile_items)),
+                max_chars=max(0, int(self.config.memory.profile_chars)),
+            )
             context = engine.build_context(
                 query,
                 scope,
                 query_vector=vector,
                 header=self.config.memory.inject_header or "记忆",
+                # 画像里已经写过的，别在记忆块里再写一遍
+                exclude_ids=profile.ids,
             )
-            profile = engine.build_profile(
-                scope,
-                max_items=max(0, int(self.config.memory.profile_items)),
-                max_chars=max(0, int(self.config.memory.profile_chars)),
-            )
-            body = self._wrap_context(context.text, profile)
+            body = self._wrap_context(context.text, profile.text)
             if not body:
                 return None
             new_items = list(items)
             new_items.insert(self._insert_index(items), self._build_memory_item(items, body))
             if context.hits:
                 engine.reinforce([hit.memory.id for hit in context.hits])
-            return {"success": True, "action": "continue", "modified_kwargs": {"items": new_items}}
+            # ⚠ 必须**整体复制**原始 kwargs 再替换 items：
+            # 宿主用 modified_kwargs 整体替换载荷，漏掉 item_schema_version
+            # 会被判成「items 无效，已忽略」——记忆看着进去了，其实没进。
+            modified = dict(kwargs)
+            modified["items"] = new_items
+            if self.config.plugin.verbose:
+                self.ctx.logger.info(
+                    "[memfade] 注入 %d 条记忆（事实 %d / 回声 %d）到 %d 个 item 中",
+                    len(context.hits),
+                    len(context.facts),
+                    len(context.echoes),
+                    len(new_items),
+                )
+            return {"success": True, "action": "continue", "modified_kwargs": modified}
         except Exception as exc:
             self.ctx.logger.warning("[memfade] 注入记忆失败: %s", exc)
             return None
@@ -849,6 +864,47 @@ class MemFadePlugin(MaiBotPlugin):
         report = await engine.consolidate()
         return report.as_dict()
 
+    @API("memfade_selfcheck", description="自检：跑一遍注入流程并返回将要写入的 item", version="1")
+    async def memfade_selfcheck(self, query: str = "今天吃什么") -> Dict[str, Any]:
+        """在**运行中的插件实例**里跑一遍注入流程。
+
+        返回值里能看到最终塞进模型的 item 结构，
+        用来确认「记忆块真的能被宿主接受」，而不只是单元测试通过。
+        """
+
+        engine = self._engine
+        if engine is None:
+            return {"ok": False, "error": "引擎未就绪"}
+        scope = Scope(platform="qq", chat_type="session", chat_id="selfcheck")
+        latest = engine.store.iter_all(limit=1)
+        if latest:
+            # 用最近有记忆的那个会话，自检才有东西可检
+            scope = Scope.from_key(latest[0].scope_key)
+        items = [
+            {
+                "item_type": "UserMessageItem",
+                "meta": {
+                    "item_id": "selfcheck-user",
+                    "logical_turn_id": "selfcheck-turn",
+                    "timestamp": datetime.now().isoformat(),
+                },
+                "parts": [{"type": "text", "text": query}],
+            }
+        ]
+        result = await self._inject_into_items(
+            {"items": items, "item_schema_version": 1, "session_id": scope.chat_id}
+        )
+        if result is None:
+            return {"ok": True, "injected": False, "reason": "没有召回任何记忆"}
+        modified = result["modified_kwargs"]
+        injected = modified["items"][0]
+        return {
+            "ok": True,
+            "injected": True,
+            "item_count": len(modified["items"]),
+            "item_schema_version": modified.get("item_schema_version"),
+            "item": injected,
+        }
 
 def create_plugin() -> MemFadePlugin:
     """创建插件实例。"""
