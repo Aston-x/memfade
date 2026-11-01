@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memfade"
-version = "0.1.0"
+version = "0.2.0"
 description = "记忆淡化引擎 —— 给聊天机器人用的可移植长期记忆插件，会记得也会忘得恰到好处"
 readme = "README.md"
 requires-python = ">=3.10"
