@@ -6,7 +6,7 @@
 > memfade 还管「这件事**还该不该被想起来**」。
 
 ```
-核心 3944 行 · 零第三方依赖 · 单文件 SQLite · 167 项测试
+核心 4032 行 · 零第三方依赖 · 单文件 SQLite · 188 项测试
 适配器 2062 行 · 覆盖 MaiBot / LangBot / AstrBot / NoneBot2 / Koishi + HTTP 侧车
 ```
 

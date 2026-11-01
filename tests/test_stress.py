@@ -306,6 +306,74 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
         self.assertIn("许杏玖住在杭州", contents)
         self.assertNotIn("许杏玖住在上海", contents)
 
+    async def test_injection_respects_budget_and_limits(self):
+        """注入出来的文本永远不超过预算，回声层永远不超过条数上限。"""
+
+        self._seed(150)
+        for scope in SCOPES:
+            for query in WORDS[:5]:
+                ctx = self.engine.build_context(query, scope, top_k=20)
+                cfg = self.config.retrieval
+                self.assertLessEqual(
+                    ctx.token_estimate,
+                    cfg.budget_tokens + 40,
+                    "注入超预算：%d > %d" % (ctx.token_estimate, cfg.budget_tokens),
+                )
+                self.assertLessEqual(len(ctx.echoes), cfg.echo_max, "回声层超量")
+
+    async def test_archived_and_superseded_never_injected(self):
+        """归档和被取代的记忆绝不进上下文。"""
+
+        scope = SCOPES[0]
+        keep = self.engine.remember(
+            MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9), scope
+        )
+        gone = self.engine.remember(
+            MemoryDraft(content="许杏玖讨厌香菜", kind=MemoryKind.PREFERENCE, importance=0.9), scope
+        )
+        self.engine.store.mark_superseded(gone.id, keep.id)
+        ctx = self.engine.build_context("许杏玖", scope, top_k=20)
+        self.assertNotIn("讨厌香菜", ctx.text)
+
+    async def test_pinned_memory_never_fades(self):
+        """置顶的记忆永不衰减。"""
+
+        from memfade.types import Memory
+
+        scope = SCOPES[0]
+        mem = self.engine.remember(
+            MemoryDraft(content="许杏玖最重要的约定", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+        )
+        pinned = Memory(**{**mem.__dict__, "pinned": True})
+        self.engine.store.update(pinned)
+        await self.engine.consolidate(scope)
+        after = self.engine.store.get(mem.id)
+        self.assertEqual(after.status, MemoryStatus.ACTIVE)
+        self.assertGreaterEqual(after.strength, 1.0 - 1e-9)
+
+    async def test_recall_is_sorted_by_score(self):
+        """召回结果必须按分数降序（面板和注入都靠这个顺序）。"""
+
+        self._seed()
+        for scope in SCOPES:
+            for query in WORDS[:5]:
+                hits = self.engine.recall(query, scope, top_k=20)
+                scores = [h.score for h in hits]
+                self.assertEqual(scores, sorted(scores, reverse=True))
+
+    async def test_reinforce_has_cooldown(self):
+        """连续强化不该把强度叠上去（否则一次注入就能把记忆钉死）。"""
+
+        scope = SCOPES[0]
+        mem = self.engine.remember(
+            MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9), scope
+        )
+        self.engine.reinforce([mem.id])
+        first = self.engine.store.get(mem.id).strength
+        self.engine.reinforce([mem.id])
+        second = self.engine.store.get(mem.id).strength
+        self.assertAlmostEqual(first, second, places=6, msg="冷却期内不该重复强化")
+
 
 if __name__ == "__main__":
     unittest.main()
