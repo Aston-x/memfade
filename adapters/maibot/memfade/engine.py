@@ -77,7 +77,7 @@ class MemoryEngine:
         content = (draft.content or "").strip()
         if not content:
             return None
-        if draft.importance < self.config.extraction.min_importance:
+        if draft.importance < self._min_importance(draft.kind):
             return None
 
         scope_key = scope.key()
@@ -128,7 +128,7 @@ class MemoryEngine:
             content = (draft.content or "").strip()
             if not content:
                 continue
-            if draft.importance < self.config.extraction.min_importance:
+            if draft.importance < self._min_importance(draft.kind):
                 continue
             if self.store.find_by_hash(normalized_hash(content), scope_key) is not None:
                 continue
@@ -195,6 +195,21 @@ class MemoryEngine:
             if is_near_duplicate(mem, probe, threshold):
                 return mem
         return None
+
+    def _min_importance(self, kind: MemoryKind) -> float:
+        """按种类取入库门槛。
+
+        事件类记忆天生重要性低（抽取器给 0.2~0.45），
+        若和稳定事实共用一个门槛会被全部滤掉——那淡化梯度就永远没机会上场。
+        事件便宜、靠自然退场淘汰，门槛放低；稳定事实常驻注入，门槛保持高。
+        """
+
+        if kind is MemoryKind.EPISODIC:
+            return min(
+                self.config.extraction.min_importance,
+                self.config.extraction.min_importance_episodic,
+            )
+        return self.config.extraction.min_importance
 
     # ------------------------------------------------------------------ #
     # 召回与注入

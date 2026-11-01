@@ -368,6 +368,10 @@ class MemFadePlugin(MaiBotPlugin):
 
         # 1) 收集对话，达到节奏就抽取
         if self.config.memory.extract_enabled and text:
+            if self.config.plugin.verbose:
+                self.ctx.logger.info(
+                    "[memfade] 旁听消息 scope=%s 第 %d 条", key, self._counter.get(key, 0) + 1
+                )
             await self._maybe_extract(parsed, scope)
 
         # 2) 顺路做一次整理（按间隔节流）

@@ -134,16 +134,23 @@ def unpack_vector(blob: Optional[bytes]) -> Optional[list[float]]:
 
 
 def _normalize_pairs(raw: list[tuple[float, int]]) -> list[tuple[int, float]]:
-    """把一组 (原始分, id) 归一化到 [0,1]，保持顺序。"""
+    """把一组 (原始分, id) 归一化到 [0,1]，保持顺序。
+
+    ⚠ 这里用的是**按最大值归一化**，不是 min-max。
+
+    min-max 在候选很少时会制造断崖：两条候选里分数低的那条直接变成 0，
+    于是「短而无关的文档」会因为 BM25 稍高就把「长而重要的文档」压下去——
+    相关度差距能轻易盖过显著性的差距。
+
+    按最大值归一化保留**比例**：最好的拿 1.0，其余按比例拿分，谁都不会凭空归零。
+    """
 
     if not raw:
         return []
-    lo = min(s for s, _ in raw)
     hi = max(s for s, _ in raw)
-    span = hi - lo
     out: list[tuple[int, float]] = []
     for score, mid in raw:
-        normalized = 1.0 if span <= 0 else (score - lo) / span
+        normalized = 1.0 if hi <= 0 else max(0.0, score) / hi
         out.append((mid, normalized))
     return out
 

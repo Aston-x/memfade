@@ -111,6 +111,66 @@ class TestGist(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(gist), 45)
 
 
+class TestImportanceBounds(unittest.IsolatedAsyncioTestCase):
+    """显著性必须按种类夹紧——提示词不是保证。"""
+
+    async def test_episodic_capped(self):
+        reply = '[{"content":"上周三去吃了炸鸡","kind":"episodic","importance":0.95}]'
+        extractor = MemoryExtractor(llm=FakeLLM(reply))
+        result = await extractor.extract([{"role": "user", "content": "x"}])
+        self.assertTrue(result.drafts)
+        self.assertLessEqual(result.drafts[0].importance, 0.55)
+
+    async def test_semantic_floored(self):
+        reply = '[{"content":"他叫许杏玖","kind":"semantic","importance":0.05}]'
+        extractor = MemoryExtractor(llm=FakeLLM(reply))
+        result = await extractor.extract([{"role": "user", "content": "x"}])
+        self.assertTrue(result.drafts)
+        self.assertGreaterEqual(result.drafts[0].importance, 0.40)
+
+
+class TestEngineKindThreshold(unittest.TestCase):
+    """事件类记忆的入库门槛要低于稳定事实，否则淡化梯度没机会上场。"""
+
+    def setUp(self):
+        from tests.helpers import temp_engine
+
+        self.engine, self.path, self.config = temp_engine()
+        from memfade import Scope
+
+        self.scope = Scope(platform="qq", chat_type="session", chat_id="s1")
+
+    def tearDown(self):
+        self.engine.close()
+        import os
+
+        for suffix in ("", "-wal", "-shm"):
+            p = self.path + suffix
+            if os.path.exists(p):
+                os.remove(p)
+
+    def test_episodic_below_general_threshold_is_kept(self):
+        from memfade import MemoryDraft, MemoryKind
+
+        self.config.extraction.min_importance = 0.35
+        self.config.extraction.min_importance_episodic = 0.20
+        mem = self.engine.remember(
+            MemoryDraft(content="上周三一起吃了炸鸡", kind=MemoryKind.EPISODIC, importance=0.25),
+            self.scope,
+        )
+        self.assertIsNotNone(mem, "一次性事件应当能入库，否则永远轮不到淡化")
+
+    def test_semantic_below_threshold_is_dropped(self):
+        from memfade import MemoryDraft, MemoryKind
+
+        self.config.extraction.min_importance = 0.35
+        mem = self.engine.remember(
+            MemoryDraft(content="他叫许杏玖", kind=MemoryKind.SEMANTIC, importance=0.25),
+            self.scope,
+        )
+        self.assertIsNone(mem, "稳定事实门槛要保持高")
+
+
 if __name__ == "__main__":
     unittest.main()
 

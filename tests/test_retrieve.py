@@ -45,6 +45,25 @@ class TestRetrieval(unittest.TestCase):
         hits = self.engine.recall("炸鸡", SCOPE)
         self.assertEqual(hits[0].memory.content, "关于炸鸡的重要约定")
 
+    def test_relevance_gap_cannot_swamp_importance(self):
+        """短而无关的文档不能靠 BM25 反超长而重要的文档。
+
+        相关度用 min-max 归一化时，两条候选里分数低的那条会直接归零，
+        相关度差距就能盖过显著性的差距。改成按最大值归一化保留比例。
+        """
+
+        important = MemoryDraft(
+            content="关于炸鸡的重要约定：以后点炸鸡都要加份年糕",
+            kind=MemoryKind.SEMANTIC,
+            importance=0.95,
+        )
+        trivial = MemoryDraft(content="炸鸡", kind=MemoryKind.EPISODIC, importance=0.2)
+        self.engine.remember(important, SCOPE)
+        self.engine.remember(trivial, SCOPE)
+        hits = self.engine.recall("炸鸡", SCOPE)
+        self.assertEqual(len(hits), 2)
+        self.assertEqual(hits[0].memory.content, important.content)
+
     def test_faded_memory_moves_to_echo_tier(self):
         draft = MemoryDraft(content="上周三去吃了炸鸡", kind=MemoryKind.EPISODIC, importance=0.3)
         draft.importance = 0.4
