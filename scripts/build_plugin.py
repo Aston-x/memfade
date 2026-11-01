@@ -31,6 +31,12 @@ ADAPTERS = {
     "astrbot": REPO_ROOT / "adapters" / "astrbot",
     "nonebot2": REPO_ROOT / "adapters" / "nonebot2" / "src",
 }
+# 只有 MaiBot 是「整个目录就是一个插件」的形态，能直接拷进宿主的 plugins/。
+# 其它框架各有各的安装方式（pip 包 / 插件市场 / 编译产物），不能一锅端——
+# 之前这里没分开，--deploy 会把四个适配器轮流覆盖到同一个目录里去。
+DEPLOYABLE = {
+    "maibot": REPO_ROOT / "adapters" / "maibot",
+}
 IGNORED = {"__pycache__", ".pytest_cache", ".mypy_cache"}
 
 
@@ -93,6 +99,7 @@ def main() -> int:
 
     for name, target in ADAPTERS.items():
         sync_core(target)
+    for name, target in DEPLOYABLE.items():
         if args.zip:
             make_zip(target, REPO_ROOT / "dist")
         if args.dest:

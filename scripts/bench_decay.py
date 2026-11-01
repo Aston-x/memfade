@@ -365,8 +365,10 @@ def main() -> int:
           f"（库中共 {naive.stored} 条）")
     print()
     print("注：memfade 的库可能比 naive 大——归档不等于删除，原文留着可追溯、可回滚。")
-    print("    真正的收益是「旧值残留」和「注入噪声比例」这两项；")
+    print("    真正的收益是「旧值残留」与「新旧并存」这两项；")
     print("    上下文字数略大是因为画像常驻——换来稳定事实从不缺席。")
+    print("    噪声比例两者相当：本脚本里闲聊都够「新」，本来就排在事实后面；")
+    print("    淡化真正压住的是「旧事实还占着位置」，也就是上面那两项。")
 
     for path in (naive_db, fade_db):
         for suffix in ("", "-wal", "-shm"):
