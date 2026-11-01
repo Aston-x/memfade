@@ -102,6 +102,26 @@ CANONICALIZE_PROMPT = (
     "{facts}"
 )
 
+CANONICALIZE_SPLIT_PROMPT = (
+    "把下面每一条长记忆拆成「一件事一条」。\n"
+    "\n"
+    "规则：\n"
+    "1. **每条输入都要有输出**，一条都不能漏。\n"
+    "2. 拆出来的每条只讲一件事，30 字以内。\n"
+    "3. 给出 subject（谁）、predicate（怎么样）、object（什么）三段，必须填。\n"
+    "   predicate 只是一个**动宾短语**，6 字以内（如「参加」「住在」「喜欢」），\n"
+    "   不要把整句话塞进 predicate。\n"
+    "4. 保留原文的人名和具体数字，不要改写。\n"
+    "5. 原文本来就只有一件事的，就原样输出，三元组照填。\n"
+    "\n"
+    "输出 JSON **对象**：键是输入的编号（从 0 开始），值是这一条拆出来的列表。\n"
+    "不要解释，不要 markdown 代码块：\n"
+    '{{"0": [{{"content":"...","subject":"...","predicate":"...","object":"..."}}], "1": []}}\n'
+    "\n"
+    "待拆解的记忆：\n"
+    "{facts}"
+)
+
 
 @dataclass
 class ExtractionResult:
@@ -200,9 +220,9 @@ class MemoryExtractor:
                     return lines[0][:max_chars]
             except Exception:
                 pass
-        from .textutil import first_clause
+        from .textutil import best_clause
 
-        return first_clause(text, max_chars)
+        return best_clause(text, max_chars)
 
     async def canonicalize(self, facts: Sequence[str]) -> list[dict]:
         """把零散事实规范化成「一件事一条 + 带三元组」。

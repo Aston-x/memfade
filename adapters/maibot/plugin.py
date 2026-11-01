@@ -780,7 +780,12 @@ class MemFadePlugin(MaiBotPlugin):
             return True, "整理完成", 0
 
         if action in ("搜", "search"):
-            hits = engine.recall(query, scope, top_k=8)
+            # 显式检索必须真的命中：「搜」是用户在找东西，
+            # 不该把「最近写入」但跟关键词无关的记忆一并列出来。
+            vector = await engine.embed_query(query) if query else None
+            hits = engine.recall(
+                query, scope, top_k=8, query_vector=vector, require_match=True
+            )
             if not hits:
                 await self.ctx.send.text("没找到相关的记忆。", stream_id)
                 return True, "没找到相关记忆", 0
@@ -851,7 +856,11 @@ class MemFadePlugin(MaiBotPlugin):
         if engine is None or not content:
             return False, "没听清要忘掉什么", 1
         scope = self._scope_from_kwargs(kwargs)
-        hits = engine.recall(content, scope, top_k=5)
+        # 忘掉是破坏性操作：必须真的匹配上，不能误删「最近写入」的那条。
+        vector = await engine.embed_query(content) if content else None
+        hits = engine.recall(
+            content, scope, top_k=5, query_vector=vector, require_match=True
+        )
         if not hits:
             await self.ctx.send.text("没找到要忘掉的记忆。", stream_id)
             return True, "没找到", 0
@@ -982,7 +991,14 @@ class MemFadePlugin(MaiBotPlugin):
             self._last_search = []
             return {"count": 0}
         scope = Scope(platform="qq", chat_type="session", chat_id="webui")
-        hits = engine.recall(query, scope, top_k=max(1, min(50, int(limit))))
+        vector = await engine.embed_query(query) if query else None
+        hits = engine.recall(
+            query,
+            scope,
+            top_k=max(1, min(50, int(limit))),
+            query_vector=vector,
+            require_match=bool(query),
+        )
         self._last_search = [
             {
                 "content": hit.memory.content[:100],
@@ -1010,7 +1026,14 @@ class MemFadePlugin(MaiBotPlugin):
         if engine is None:
             return {"results": []}
         scope = Scope(platform="qq", chat_type="private", chat_id="webui")
-        hits = engine.recall(query, scope, top_k=max(1, min(20, int(limit))))
+        vector = await engine.embed_query(query) if query else None
+        hits = engine.recall(
+            query,
+            scope,
+            top_k=max(1, min(20, int(limit))),
+            query_vector=vector,
+            require_match=bool(query),
+        )
         return {
             "results": [
                 {

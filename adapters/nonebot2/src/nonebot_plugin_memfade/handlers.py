@@ -75,7 +75,8 @@ async def handle_forget(matcher: Matcher, event) -> None:
 
     content = str(matcher.get("content") or "").strip()
     scope = scope_of(event)
-    hits = engine.recall(content, scope, top_k=5)
+    # 忘掉是破坏性操作：必须真的匹配上，不能误删「最近写入」的那条。
+    hits = engine.recall(content, scope, top_k=5, require_match=True)
     if not hits:
         await matcher.finish("没找到要忘掉的记忆。")
     target = hits[0].memory
@@ -90,7 +91,8 @@ async def handle_query(matcher: Matcher, event) -> None:
     query = str(matcher.get("query") or "").strip()
     scope = scope_of(event)
     if query:
-        hits = engine.recall(query, scope, top_k=8)
+        # 显式检索必须真的命中，不把「最近写入」的无关记忆列出来。
+        hits = engine.recall(query, scope, top_k=8, require_match=True)
         if not hits:
             await matcher.finish("没找到相关的记忆。")
         lines = []

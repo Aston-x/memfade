@@ -153,9 +153,9 @@ class ConsolidationService:
                 )
             except Exception:
                 pass
-        from .textutil import first_clause
+        from .textutil import best_clause
 
-        return first_clause(mem.content, self.config.fade.gist_max_chars)
+        return best_clause(mem.content, self.config.fade.gist_max_chars)
 
     def _merge_pass(self, scope_key: Optional[str], report: ConsolidationReport) -> int:
         """合并近似重复。"""

@@ -37,7 +37,14 @@ from typing import Any, Optional, Sequence
 from .config import MemFadeConfig
 from .decay import DEFAULT_POLICY, FadePolicy, effective_strength, resolve_status, stability_days
 from .store import MemoryStore
-from .textutil import estimate_tokens, fts_text, longest_common_substring, similarity, token_set
+from .textutil import (
+    cjk_unigrams,
+    estimate_tokens,
+    fts_text,
+    longest_common_substring,
+    similarity,
+    token_set,
+)
 from .types import Memory, MemoryStatus, RetrievalHit
 
 
@@ -93,6 +100,7 @@ class MemoryRetriever:
         kinds: Optional[Sequence[str]] = None,
         exclude: Optional[set[int]] = None,
         query_vector: Optional[Sequence[float]] = None,
+        require_match: bool = False,
     ) -> list[RetrievalHit]:
         """召回并打分。返回按分数降序排列的命中列表。"""
 
@@ -112,6 +120,11 @@ class MemoryRetriever:
         if text:
             hits = self.store.search_fts(text, scope_key, limit=cfg.channel_candidates, kinds=kinds)
             collect(hits, "bm25")
+            # 单字兜底通道。主通道一无所获、而且查询短到像关键词时，
+            # 才允许用单字去捞——否则「的」「我」会把整库拖进来。
+            uni_hits = self._uni_hits(text, scope_key, cfg, kinds)
+            if not hits and uni_hits:
+                collect(uni_hits, "uni")
             # 「被问起就想起来」：已归档的记忆平时不出现，
             # 但如果对方明确问到了，就把它捞回来并复活。
             revived = self._revive_archived(text, scope_key, kinds)
@@ -147,6 +160,11 @@ class MemoryRetriever:
 
         scored.sort(key=lambda h: (h.score, h.memory.importance, h.memory.created_at), reverse=True)
         scored = self._apply_association_boost(scored, cfg.association_boost)
+        if require_match:
+            # ⚠ 必须在 **top_k 截断之前**过滤：
+            # 否则「最近写入但跟问题无关」的候选会占掉额度，
+            # 真正命中的记忆反而被挤出去。
+            scored = [h for h in scored if h.relevance >= cfg.min_relevance]
         return scored[:limit]
 
     def _revive_archived(
@@ -155,7 +173,19 @@ class MemoryRetriever:
         scope_key: str,
         kinds: Optional[Sequence[str]] = None,
     ) -> list[tuple[int, float]]:
-        """把「被明确问起」的已归档记忆捞回来。"""
+        """把「被明确问起」的淡出记忆捞回来。
+
+        归档（ARCHIVED）和成摘要（GISTED）都要救回来，理由不同：
+
+        * 归档：平时根本不进上下文，问到了当然要捞回来；
+        * 成摘要：它还在上下文里，但只剩下那一行摘要。
+          **对方问的往往正是摘要丢掉的那部分细节**——
+          「蓝桥杯报名截止到什么时候」，而摘要只剩「蓝桥杯报名」。
+          这时候拿摘要去回答，等于没回答。
+
+        淡出中（FADING）不用救：它本来就显示原文，只是带着
+        「可能已经变了」的提示。
+        """
 
         cfg = self.config.retrieval
         min_common = cfg.revive_min_common
@@ -164,12 +194,22 @@ class MemoryRetriever:
         candidates = self.store.search_fts(
             query, scope_key, limit=cfg.channel_candidates, kinds=kinds, include_archived=True
         )
+        if not candidates:
+            # 单字查询（「辣」）在多字词通道里找不到东西，
+            # 但「被问起就想起来」不能因此失效。
+            candidates = self.store.search_substring(
+                cjk_unigrams(query),
+                scope_key,
+                limit=cfg.channel_candidates,
+                kinds=kinds,
+                include_archived=True,
+            )
         out: list[tuple[int, float]] = []
         for mid, _score in candidates:
             mem = self.store.get(mid)
             if mem is None:
                 continue
-            if mem.status is not MemoryStatus.ARCHIVED:
+            if mem.status not in (MemoryStatus.ARCHIVED, MemoryStatus.GISTED):
                 continue
             common = longest_common_substring(query, mem.content)
             if len(common) < min_common:
@@ -184,6 +224,36 @@ class MemoryRetriever:
             out.append((mid, 1.0))
         return out
 
+    def _uni_hits(
+        self,
+        query: str,
+        scope_key: str,
+        cfg: Any,
+        kinds: Optional[Sequence[str]] = None,
+    ) -> list[tuple[int, float]]:
+        """单字兜底通道的候选。
+
+        三道闸门，缺一不可：
+
+        1. 查询够短（默认 ≤2 个汉字）——「辣」「猫猫」是关键词，
+           值得兜底；「我记得你之前说过喜欢吃辣」是整句，兜底只会
+           把无关记忆拖进来。
+        2. 命中数够少（默认 ≤20 条）——「我」「的」这种字到处都有，
+           命中一屏说明这个字没有区分度。
+        3. 主通道必须一无所获——词面已经命中时，多字词的结果永远更准。
+        """
+
+        from .textutil import cjk_unigrams
+
+        chars = cjk_unigrams(query)
+        if not chars or len(chars) > int(cfg.uni_max_query_chars):
+            return []
+        limit = int(cfg.uni_max_hits) + 1
+        hits = self.store.search_substring(chars, scope_key, limit=limit, kinds=kinds)
+        if len(hits) > int(cfg.uni_max_hits):
+            return []
+        return hits
+
     # ------------------------------------------------------------------ #
     # 打分
     # ------------------------------------------------------------------ #
@@ -192,6 +262,7 @@ class MemoryRetriever:
         cfg = self.config.retrieval
         bm25 = channel_scores.get("bm25")
         vector = channel_scores.get("vector")
+        uni = channel_scores.get("uni")
 
         # 相关度：两条通道都有就各占一半，只有一条就用那条。
         if bm25 is not None and vector is not None:
@@ -202,6 +273,10 @@ class MemoryRetriever:
             relevance = vector
         else:
             relevance = 0.0
+        if uni is not None:
+            # 单字命中比多字词命中弱得多，折价后再合并：
+            # 还能被召回，但绝不会排在词面精确命中前面。
+            relevance = max(relevance, uni * cfg.uni_discount)
 
         strength_eff = effective_strength(mem, now, self.policy)
         strength_term = cfg.strength_floor + (1.0 - cfg.strength_floor) * strength_eff
@@ -281,10 +356,6 @@ class MemoryRetriever:
 
         for hit in self._diversify(hits):
             if hit.memory.id in skip:
-                continue
-            if require_match and hit.relevance < cfg.min_relevance:
-                # 纯靠「最近写入」混进来的候选 relevance=0，
-                # 注入它们就是「总提旧事」——不相关的东西不该进 prompt。
                 continue
             if hit.tier == "fact":
                 line = self._render_fact(hit)

@@ -250,11 +250,25 @@ class MemoryEngine:
         top_k: Optional[int] = None,
         kinds: Optional[Sequence[str]] = None,
         query_vector: Optional[Sequence[float]] = None,
+        require_match: Optional[bool] = None,
     ) -> list[RetrievalHit]:
         """召回记忆（不强化）。"""
 
+        if require_match is None:
+            require_match = self._embed_one is not None
+        if query_vector is None and self._embed_one is not None:
+            # 调用方没给向量就自己算一份，省得每条检索路径都得记得传。
+            # _embed_sync 在有事件循环时返回 None（不阻塞事件循环），
+            # 异步路径由适配器显式 await engine.embed_query()。
+            query_vector = self._embed_sync(query)
         return self.retriever.recall(
-            query, scope.key(), now=now, top_k=top_k, kinds=kinds, query_vector=query_vector
+            query,
+            scope.key(),
+            now=now,
+            top_k=top_k,
+            kinds=kinds,
+            query_vector=query_vector,
+            require_match=require_match,
         )
 
     def build_context(
@@ -272,11 +286,18 @@ class MemoryEngine:
     ) -> MemoryContext:
         """召回 + 分层 + 预算裁剪 + 强化。适配器的常用入口。"""
 
-        hits = self.recall(query, scope, now=now, top_k=top_k, query_vector=query_vector)
         if require_match is None:
             # 有向量能力时才要求「检索真的命中」——
             # 否则词面不重叠的近义记忆会被误杀。
             require_match = self._embed_one is not None
+        hits = self.recall(
+            query,
+            scope,
+            now=now,
+            top_k=top_k,
+            query_vector=query_vector,
+            require_match=require_match,
+        )
         context = self.retriever.assemble(
             hits,
             header=header,

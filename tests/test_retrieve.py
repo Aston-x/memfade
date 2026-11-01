@@ -31,6 +31,64 @@ class TestRetrieval(unittest.TestCase):
         hits = self.engine.recall("炸鸡", SCOPE)
         self.assertEqual(len(hits), 1, "中文二元组检索应命中")
 
+    def test_single_char_query_finds_memory(self):
+        """单字查询也要能查到东西。
+
+        全文索引里存的是二元组，「许杏玖喜欢辣的食物」的二元组是
+        「喜欢」「欢辣」「辣的」……没有孤零零的「辣」。
+        所以只查二元组的话，搜索框里打一个「辣」就什么都搜不到——
+        而打单字恰恰是搜索框最常见的用法。
+        """
+
+        draft = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8)
+        self.engine.remember(draft, SCOPE)
+        hits = self.engine.recall("辣", SCOPE)
+        self.assertEqual(len(hits), 1, "单字查询应能命中")
+        self.assertIn("uni", hits[0].channels, "命中方式应标明是单字通道")
+
+    def test_single_char_query_does_not_smash_relevance(self):
+        """单字兜底不能盖过词面精确命中。"""
+
+        exact = MemoryDraft(content="关于炸鸡的重要约定：以后点炸鸡都要加份年糕", importance=0.9)
+        single = MemoryDraft(content="辣", importance=0.2)
+        self.engine.remember(exact, SCOPE)
+        self.engine.remember(single, SCOPE)
+        hits = self.engine.recall("炸鸡", SCOPE)
+        self.assertEqual(hits[0].memory.content, exact.content)
+
+    def test_common_char_does_not_pollute_recall(self):
+        """「的」这种到处都是的字不能让整库记忆涌进来。
+
+        单字通道只在查询够短、且这个字有区分度时才启用。
+        """
+
+        for i in range(30):
+            self.engine.remember(
+                MemoryDraft(content="这是第%d条关于日常琐事的记录" % i, importance=0.5), SCOPE
+            )
+        self.engine.remember(MemoryDraft(content="许杏玖喜欢辣的食物", importance=0.8), SCOPE)
+        hits = self.engine.recall("的", SCOPE)
+        self.assertLessEqual(len(hits), 3, "高频单字不该把整库拖进来")
+
+    def test_long_query_ignores_single_char_channel(self):
+        """整句查询不该触发单字兜底。"""
+
+        self.engine.remember(MemoryDraft(content="今天中午一起去吃了炸鸡", importance=0.5), SCOPE)
+        hits = self.engine.recall("我记得你之前说过喜欢吃炸鸡对吧", SCOPE)
+        for hit in hits:
+            self.assertNotIn("uni", hit.channels)
+
+    def test_single_char_hits_are_discriminated(self):
+        """只对上一个字的记忆，相关度应当低于两个字都对上的。"""
+
+        both = MemoryDraft(content="许杏玖喜欢辣的食物", importance=0.5)
+        one = MemoryDraft(content="许杏玖讨厌香菜", importance=0.5)
+        self.engine.remember(both, SCOPE)
+        self.engine.remember(one, SCOPE)
+        hits = self.engine.recall("辣", SCOPE, require_match=True)
+        self.assertEqual(len(hits), 1, "「辣」不该命中只有「香菜」的记忆")
+        self.assertEqual(hits[0].memory.content, both.content)
+
     def test_multi_word_query_uses_or_semantics(self):
         """多词查询必须是 OR，不是 AND。
 
@@ -279,6 +337,34 @@ class TestRetrieval(unittest.TestCase):
         )
         context = self.engine.build_context("今天吃什么呢", SCOPE, require_match=False)
         self.assertIn("许杏玖喜欢吃辣的东西", context.text)
+
+    def test_relevance_floor_applies_before_top_k(self):
+        """相关性底线要在 top_k 截断**之前**生效。
+
+        否则「最近写入但跟问题无关」的候选会占掉额度，
+        真正命中的记忆反而被挤出去。
+        """
+
+        self.engine.config.retrieval.top_k = 2
+        self.engine.remember(
+            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
+        )
+        # 造几条「最近写入但完全不相关」的高重要性记忆
+        for i in range(6):
+            self.engine.remember(
+                MemoryDraft(
+                    content=f"完全不相干的第{i}条重要事实内容占位",
+                    kind=MemoryKind.SEMANTIC,
+                    importance=0.95,
+                ),
+                SCOPE,
+            )
+        hits = self.engine.recall("她喜欢吃什么", SCOPE, require_match=True)
+        self.assertTrue(hits)
+        self.assertTrue(
+            any("喜欢吃辣" in h.memory.content for h in hits),
+            "命中的记忆不该被不相关候选挤出 top_k",
+        )
 
     def test_matched_memory_is_injected(self):
         self.engine.remember(

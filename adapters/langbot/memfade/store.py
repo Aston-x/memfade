@@ -534,6 +534,72 @@ class MemoryStore:
             ).fetchall()
         return [(str(r[0]), int(r[1])) for r in rows]
 
+    def search_substring(
+        self,
+        terms: Sequence[str],
+        scope_key: str,
+        *,
+        limit: int = 40,
+        kinds: Optional[Sequence[str]] = None,
+        statuses: Optional[Sequence[str]] = None,
+        include_archived: bool = False,
+    ) -> list[tuple[int, float]]:
+        """按「内容里含有这些字」找记忆。返回 [(memory_id, 命中率)]。
+
+        为什么不用 FTS：全文索引里存的是二元组，查询「辣」是**一个**词，
+        而「许杏玖喜欢辣的食物」的二元组是「欢辣」「辣的」——永远对不上。
+        把单字也塞进同一个 FTS 表又会污染 BM25 的长度归一化
+        （长记忆被压得更狠，重要的长约定会被短条目反超）。
+
+        所以单字查询单独走 LIKE：语义直白——「内容里有没有这个字」。
+        命中率 = 命中的字数 / 查询的字数，用来区分「对上两个字」和
+        「只对上一个字」。
+        """
+
+        terms = [t for t in dict.fromkeys(terms or ()) if t]
+        if not terms:
+            return []
+
+        clauses = ["(m.scope_key=? OR m.cross_scope=1)"]
+        params: list[Any] = [scope_key]
+        if not include_archived:
+            clauses.append("m.status NOT IN ('archived','superseded')")
+        else:
+            clauses.append("m.status IN ('archived','gisted','fading','active')")
+        if kinds:
+            clauses.append("m.kind IN (" + ",".join("?" * len(kinds)) + ")")
+            params.extend(kinds)
+        if statuses:
+            clauses.append("m.status IN (" + ",".join("?" * len(statuses)) + ")")
+            params.extend(statuses)
+
+        # LIKE 的通配符要转义，否则查询里带 % 或 _ 会被当成模式。
+        patterns = ["%" + t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%" for t in terms]
+        where = " OR ".join("m.content LIKE ? ESCAPE '\\'" for _ in patterns)
+        params.extend(patterns)
+        params.append(int(limit))
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    f"""
+                    SELECT m.id AS mid, m.content AS content
+                    FROM memories m
+                    WHERE {' AND '.join(clauses)} AND ({where})
+                    LIMIT ?
+                    """,
+                    params,
+                ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+
+        out: list[tuple[int, float]] = []
+        for row in rows:
+            content = str(row["content"] or "")
+            hit = sum(1 for t in terms if t in content)
+            out.append((int(row["mid"]), hit / float(len(terms))))
+        out.sort(key=lambda item: item[1], reverse=True)
+        return out
+
     # ------------------------------------------------------------------ #
     # 检索通道
     # ------------------------------------------------------------------ #

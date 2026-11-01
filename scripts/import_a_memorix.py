@@ -240,6 +240,98 @@ def canonicalize_via_host(
 
     return asyncio.run(_run())
 
+
+def split_via_host(
+    texts: List[str],
+    host_root: str,
+    chunk_size: int = 2,
+) -> List[List[Dict[str, Any]]]:
+    """把每条长记忆拆成多条原子事实。
+
+    返回与 ``texts`` **一一对应**：第 i 项是第 i 条输入拆出来的事实列表。
+    空列表表示这条没拆成功——调用方必须**保留原条目**。
+
+    为什么不能像 canonicalize_via_host 那样「失败就返回原文」：
+    那等于把一条 284 字的长记忆删掉、又塞回一条 284 字的长记忆，
+    还顺手丢了三元组——记忆没变好，反而被改坏了。
+    「拆不动就别动」才是对的。
+
+    与 canonicalize_via_host 的另一个区别：输出按**输入编号**组织
+    （JSON 对象的键就是编号），所以拆得对不对能逐条核对，
+    不会出现「模型把 3 条输入合成 1 条」时对不上号。
+    """
+
+    import asyncio
+
+    if host_root and host_root not in sys.path:
+        sys.path.insert(0, host_root)
+    from src.services import llm_service  # type: ignore
+
+    from memfade.extract import CANONICALIZE_SPLIT_PROMPT, parse_json_block
+
+    async def _run() -> List[List[Dict[str, Any]]]:
+        out: List[List[Dict[str, Any]]] = []
+        for start in range(0, len(texts), chunk_size):
+            chunk = texts[start : start + chunk_size]
+            out.extend(await _run_chunk(chunk))
+        return out
+
+    async def _run_chunk(chunk: List[str]) -> List[List[Dict[str, Any]]]:
+        try:
+            return await _one_batch(chunk)
+        except Exception as exc:
+            # 失败就**拆成两半**再试：模型在长输入下容易思考超时。
+            if len(chunk) > 1:
+                mid = len(chunk) // 2
+                return (await _run_chunk(chunk[:mid])) + (await _run_chunk(chunk[mid:]))
+            print(f"  ! 拆解失败（{len(chunk)} 条）：{exc}")
+            return [[] for _ in chunk]
+
+    async def _one_batch(chunk: List[str]) -> List[List[Dict[str, Any]]]:
+        prompt = CANONICALIZE_SPLIT_PROMPT.format(facts="\n".join(f"- {t}" for t in chunk))
+        request = llm_service.LLMServiceRequest(
+            task_name="memory",
+            request_type="memfade.split",
+            prompt=prompt,
+            temperature=0.1,
+            max_tokens=8000,
+        )
+        result = await llm_service.generate(request)
+        payload = result.to_capability_payload()
+        raw = str(payload.get("response") or "")
+        items = parse_json_block(raw)
+        if not isinstance(items, dict) or not items:
+            raise RuntimeError("模型没有返回可解析的 JSON 对象")
+
+        out: List[List[Dict[str, Any]]] = []
+        for index in range(len(chunk)):
+            raw_items = items.get(str(index))
+            if not isinstance(raw_items, list):
+                # 模型漏了这一条 → 保留原条目，不要瞎猜。
+                print(f"  ! 模型没给出第 {index} 条的拆解结果，保留原条目")
+                out.append([])
+                continue
+            facts: List[Dict[str, Any]] = []
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                content = str(item.get("content") or "").strip()
+                if not content:
+                    continue
+                facts.append(
+                    {
+                        "content": content,
+                        "subject": str(item.get("subject") or "").strip(),
+                        "predicate": str(item.get("predicate") or "").strip(),
+                        "object": str(item.get("object") or "").strip(),
+                    }
+                )
+            out.append(facts)
+        return out
+
+    return asyncio.run(_run())
+
+
 def read_webui_token(config_path: str) -> str:
     """从 MaiBot 的 data/webui.json 里读 WebUI 令牌。"""
 

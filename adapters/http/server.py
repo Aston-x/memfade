@@ -137,7 +137,9 @@ class MemFadeHTTPService:
         scope = _scope_from(payload)
         query = str(payload.get("query") or "")
         top_k = int(payload.get("top_k") or 6)
-        hits = self.engine.recall(query, scope, top_k=top_k)
+        # 这是显式检索：必须真的命中，不把「最近写入」的无关记忆混进来。
+        # 查询为空时就是「随便看看」，这时不设门槛。
+        hits = self.engine.recall(query, scope, top_k=top_k, require_match=bool(query))
         return {"ok": True, "hits": [_hit_to_dict(h) for h in hits]}
 
     def context(self, payload: Dict[str, Any]) -> Dict[str, Any]:

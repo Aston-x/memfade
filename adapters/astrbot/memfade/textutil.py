@@ -22,6 +22,7 @@ from typing import Iterable
 
 _PUNCT_RE = re.compile(r"[\s　!-/:-@\[-`{-~ -⁯、-〿！-･]+")
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002ffff]")
+_CJK_RUN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002ffff]+")
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 _SENT_SPLIT_RE = re.compile(r"[。！？!?；;\n]+")
 
@@ -63,7 +64,7 @@ def bigrams(text: str) -> list[str]:
     out: list[str] = []
     cjk_runs = _CJK_RE.findall(key)
     # 按连续 CJK 片段切二元组，避免跨标点拼出无意义的组合
-    for run in re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002ffff]+", key):
+    for run in _CJK_RUN_RE.findall(key):
         if len(run) == 1:
             out.append(run)
         else:
@@ -74,8 +75,24 @@ def bigrams(text: str) -> list[str]:
     return out
 
 
+def cjk_unigrams(text: str) -> list[str]:
+    """单个汉字，去重但保持出现顺序。"""
+
+    key = normalize(text)
+    if not key:
+        return []
+    return list(dict.fromkeys(_CJK_RE.findall(key)))
+
+
 def fts_text(text: str) -> str:
-    """喂给 FTS5 的索引串：二元组之间用空格隔开。"""
+    """喂给 FTS5 的索引串：二元组之间用空格隔开。
+
+    ⚠ 这里**只存二元组**，不要把单字也塞进来。
+    同一个 FTS 表里混着单字，BM25 的长度归一化会被带偏：
+    长文档涨的 token 比短文档多，长记忆被压得更狠，
+    「重要的长约定」会被「炸鸡」这种短条目反超。
+    单字查询另有专门的通道（``store.search_substring``）。
+    """
 
     return " ".join(bigrams(text))
 
@@ -156,18 +173,161 @@ def first_clause(text: str, limit: int = 40) -> str:
     return truncate(head, limit)
 
 
-def content_words(text: str, limit: int = 8) -> list[str]:
-    """抽取内容词（用于关键词图谱与关联召回）。"""
+_FILLER_PREFIXES = (
+    "但是",
+    "不过",
+    "而且",
+    "然后",
+    "后来",
+    "另外",
+    "所以",
+    "因此",
+    "因为",
+    "由于",
+    "顺便",
+    "接着",
+    "之后",
+    "当时",
+    "这次",
+    "那次",
+)
 
-    words = [w.lower() for w in _WORD_RE.findall(normalize(text))]
-    cjk = _CJK_RE.findall(normalize(text))
+
+def best_clause(text: str, limit: int = 40) -> str:
+    """挑出最有信息量的一个分句。
+
+    为什么不能只取第一句：记忆淡化成 gist 之后，这一行就是它剩下的全部。
+    而第一句有时是铺垫——「后来他跟朋友去吃了炸鸡」里真正有信息的是
+    「他跟朋友去吃了炸鸡」，取第一句就丢了「跟朋友」这个关键信息。
+
+    但也不能一律换掉：第一句通常带主语（「许杏玖喜欢辣的食物」），
+    换掉就丢了主语。所以规则是——
+    **第一句不是铺垫就用它；是铺垫才从后面挑一句有实词的。**
+    """
+
+    key = normalize(text)
+    if not key:
+        return ""
+    clauses = [c.strip() for c in re.split(r"[，,。；;：:、！？!?\n]", key) if c.strip()]
+    if not clauses:
+        return truncate(key, limit)
+    head = clauses[0]
+    if not _is_filler(head):
+        return truncate(head, limit)
+    rest = clauses[1:]
+    if not rest:
+        return truncate(head, limit)
+    return truncate(max(rest, key=_clause_score), limit)
+
+
+def _clause_score(clause: str) -> float:
+    """给一个分句打「信息量」分。"""
+
+    score = float(len(clause))
+    # 实词越多越可能是「有内容」的那一句
+    score += 2.0 * len(content_words(clause, limit=16))
+    return score
+
+
+def _is_filler(clause: str) -> bool:
+    """这个分句是不是「铺垫」。"""
+
+    for filler in _FILLER_PREFIXES:
+        if clause.startswith(filler):
+            return True
+    # 一个实词都没有，多半也是铺垫
+    return not content_words(clause, limit=4)
+
+
+_STOPWORDS = frozenset(
+    {
+        # 单字虚词
+        "的",
+        "了",
+        "是",
+        "在",
+        "和",
+        "也",
+        "就",
+        "都",
+        "而",
+        "及",
+        "与",
+        "着",
+        "或",
+        "这",
+        "那",
+        "我",
+        "你",
+        "他",
+        "她",
+        "它",
+        "们",
+        "个",
+        "些",
+        "不",
+        "没",
+        "很",
+        "更",
+        "最",
+        "会",
+        "要",
+        "能",
+        "有",
+        "被",
+        "把",
+        "给",
+        "让",
+        # 常见双字虚词
+        "我们",
+        "他们",
+        "自己",
+        "这个",
+        "那个",
+        "什么",
+        "怎么",
+        "因为",
+        "所以",
+        "但是",
+        "不过",
+        "然后",
+        "后来",
+        "已经",
+        "还是",
+        "可以",
+        "这样",
+        "而且",
+        "另外",
+        "于是",
+        "如果",
+        "不过",
+    }
+)
+
+_FUNCTION_CHARS = frozenset("的了是在和也就都而及与着或这那我你他她它们个些不没很更最会要能有被把给让个所之其而且但却呢吧啊吗嘛哦嗯")
+
+
+def content_words(text: str, limit: int = 8) -> list[str]:
+    """抽取内容词（用于关键词图谱与关联召回）。
+
+    中文按**二元组**切，不按单字。
+
+    ⚠ 早先这里用的是单字切分，结果中文一个词都抽不出来：
+    ``_CJK_RE.findall`` 返回的是单个汉字，``len(w) < 2`` 把它们全过滤了。
+    而中文里单字几乎没有信息量（「的」「是」「我」到处都是），
+    切单字等于没切。二元组才是中文能用得上的最小单位。
+    """
+
     out: list[str] = []
     seen: set[str] = set()
-    for w in words + cjk:
-        if len(w) < 2 or w in seen:
+    for token in bigrams(text):
+        if len(token) < 2 or token in seen or token in _STOPWORDS:
             continue
-        seen.add(w)
-        out.append(w)
+        # 二元组会切出「的食」「辣的」这种半虚词组合——首尾挂着虚词的丢掉。
+        if token[0] in _FUNCTION_CHARS or token[-1] in _FUNCTION_CHARS:
+            continue
+        seen.add(token)
+        out.append(token)
         if len(out) >= limit:
             break
     return out
@@ -177,6 +337,122 @@ def join_tokens(tokens: Iterable[str]) -> str:
     """把 token 序列拼回 FTS 查询串。"""
 
     return " ".join(t for t in tokens if t)
+
+
+_BRACKETS = {"（": "）", "(": ")", "【": "】", "[": "]", "「": "」", "『": "』", "《": "》"}
+_CLOSERS = set(_BRACKETS.values())
+# 句号级别的分隔符：一句就是一件事。
+_STRONG_SEP = "。！？!?"
+# 逗号级别的分隔符：只是短语之间的停顿。
+_SOFT_SEP = "，,、；;"
+# 冒号单独处理：后面跟数字就不是分隔符（「10:00」「https://」）。
+_COLON = "：:"
+# 归一化（NFKC）会把全角冒号变成半角，所以「10:00」「https://」这类
+# 会被误当成分句点。判断规则：冒号后面跟数字就不是分隔符。
+
+
+def split_atomic(text: str, *, max_chars: int = 40, max_clauses: int = 2) -> list[str]:
+    """把一段长话拆成「一件事一条」。
+
+    为什么要自己拆：LLM 不可用、或者模型没给出可解析的结果时，
+    兜底不能只是「原样保留」——一段 284 字的话塞进记忆库，
+    注入时只能截断（断在半句里），矛盾检测也抓不住（缺三元组）。
+    规则拆分不如模型懂语义，但至少保证「一条一件事、一条不太长」。
+
+    两条约束同时满足才算合格：
+
+    * 不超过 ``max_chars`` 个字；
+    * 不超过 ``max_clauses`` 个分句。
+
+    切分点会跳过括号和引号里面的内容——
+    「简介"AI炼丹师，炼到什么发什么喵"」里的逗号不是分句点。
+    """
+
+    # 这里**不**用 normalize()：NFKC 会把「（」「，」折成半角，
+    # 拆出来的记忆就带着变形了的标点。折叠空白就够了。
+    key = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not key:
+        return []
+
+    pieces = _split_outside_brackets(key)
+    facts: list[str] = []
+    buf = ""
+    for piece in pieces:
+        candidate = (buf + "，" + piece) if buf else piece
+        if len(candidate) <= max_chars and _count_clauses(candidate) <= max_clauses:
+            buf = candidate
+            continue
+        if buf:
+            facts.append(buf)
+            buf = ""
+        if len(piece) <= max_chars:
+            buf = piece
+        else:
+            # 单个分句本身就超长 → 只能硬切，切点尽量落在分隔符上
+            for part in _hard_split(piece, max_chars):
+                facts.append(part)
+    if buf:
+        facts.append(buf)
+    return facts
+
+
+def _count_clauses(text: str) -> int:
+    """分句数（只算句号级别的分隔符）。
+
+    逗号不计入：「软件赛科目C/C++，Java，Python，Web应用开发」是**一件事**
+    （一门课的科目列表），不是四件事。
+    """
+
+    return len([p for p in re.split("[" + re.escape(_STRONG_SEP) + "]", text) if p.strip()])
+
+
+def _split_outside_brackets(text: str) -> list[str]:
+    """按标点切，但括号/引号里面的标点不算，冒号后面是数字也不算。"""
+
+    out: list[str] = []
+    buf: list[str] = []
+    stack: list[str] = []
+    for index, ch in enumerate(text):
+        if ch in _BRACKETS:
+            stack.append(_BRACKETS[ch])
+        elif ch in _CLOSERS and stack and stack[-1] == ch:
+            stack.pop()
+        nxt = text[index + 1] if index + 1 < len(text) else ""
+        is_colon = ch in _COLON and not nxt.isdigit()
+        if not stack and (ch in _STRONG_SEP or ch in _SOFT_SEP or is_colon):
+            piece = "".join(buf).strip()
+            if piece:
+                out.append(piece)
+            buf = []
+            continue
+        buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def _hard_split(text: str, limit: int) -> list[str]:
+    """超长的单个分句：尽量在靠后的位置切开。"""
+
+    if len(text) <= limit:
+        return [text]
+    out: list[str] = []
+    rest = text
+    while len(rest) > limit:
+        window = rest[: limit + 1]
+        # 只在标点处切，绝不从数字/时间中间劈开
+        # （「考4小时9:00-13:00」从中间切会变成「考4小时9」和「00-13:00」）。
+        cut = max(window.rfind(sep) for sep in _SOFT_SEP)
+        if cut < limit // 2:
+            cut = limit
+        else:
+            cut += 1
+        out.append(rest[:cut].strip())
+        rest = rest[cut:].strip()
+    if rest:
+        out.append(rest)
+    return out
 
 
 def longest_common_substring(a: str, b: str) -> str:
