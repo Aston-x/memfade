@@ -2,21 +2,27 @@
   "name": "koishi-plugin-memfade",
   "version": "0.1.0",
   "description": "记忆淡化引擎：会记得，也会忘得恰到好处。艾宾浩斯衰减 + 会话严格隔离。",
-  "main": "lib/index.cjs",
-  "module": "lib/index.mjs",
+  "type": "module",
+  "main": "lib/index.js",
+  "module": "lib/index.js",
   "typings": "lib/index.d.ts",
   "license": "MIT",
-  "keywords": ["koishi", "memory", "chatbot", "decay"],
+  "keywords": [
+    "koishi",
+    "memory",
+    "chatbot",
+    "decay"
+  ],
   "peerDependencies": {
-    "koishi": ">=4.0.0"
+    "koishi": "^4.18.11"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts --external koishi",
-    "build:watch": "tsup src/index.ts --format cjs,esm --dts --external koishi --watch"
+    "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --import ./test/register-stub.mjs --test test/plugin.test.mjs"
   },
   "devDependencies": {
-    "tsup": "^8.0.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.9.3"
   }
 }
-

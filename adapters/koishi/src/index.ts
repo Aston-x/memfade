@@ -13,7 +13,7 @@
  * 配合 LLM 插件：把 session.memfade_context 拼进 system prompt 即可。
  */
 
-import { Context, Schema, Service } from 'koishi'
+import { Context, Schema } from 'koishi'
 
 export interface MemFadeHit {
   id: number
@@ -55,15 +55,30 @@ export const Config = Schema.object({
     .description('每轮最多召回多少条记忆'),
 })
 
-export class MemoryService extends Service {
+/**
+ * 配置**数据**的类型。
+ *
+ * `Schema.object()` 返回的是 `Schema<输入, 输出>`，
+ * 宿主传给 apply 的是「输出」那一侧——解析后的配置数据。
+ * 从 schema 直接推导，schema 改了类型跟着改，不会漂移。
+ */
+export type MemFadeConfig = typeof Config extends Schema<any, infer T> ? T : never
+
+/**
+ * 记忆服务。
+ *
+ * 刻意**不**继承 Koishi 的 `Service`：那套生命周期（cordis 的注册表、
+ * inject 依赖注入）在纯插件场景里是多余的负担。插件把它挂在 `ctx.memfade`
+ * 上，其它插件直接 `ctx.memfade.context(session, text)` 就行。
+ */
+export class MemoryService {
   private buffer = new Map<string, string[]>()
   private counter = new Map<string, number>()
 
   constructor(
     public ctx: Context,
-    public config: Config,
+    public config: MemFadeConfig,
   ) {
-    super(ctx, 'memfade')
   }
 
   /** 会话作用域键：群聊按群号，私聊按用户号。 */
@@ -137,7 +152,7 @@ export class MemoryService extends Service {
     })
   }
 
-  override async start() {
+  async start() {
     this.ctx.middleware(async (session, next) => {
       const text = String(session.text ?? '').trim()
       if (text) {
@@ -175,7 +190,7 @@ declare module 'koishi' {
   }
 }
 
-export const apply = (ctx: Context, config: Config) => {
+export const apply = (ctx: Context, config: MemFadeConfig) => {
   ctx.memfade = new MemoryService(ctx, config)
 }
 

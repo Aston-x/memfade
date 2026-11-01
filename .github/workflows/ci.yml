@@ -55,3 +55,30 @@ jobs:
           name: memfade-plugins
           path: dist/
 
+  koishi:
+    name: Koishi 插件类型检查
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: adapters/koishi
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 装依赖
+        run: npm install koishi@latest typescript@5
+
+      - name: 类型检查 + 构建
+        run: npx tsc -p tsconfig.json
+
+      - name: 跑行为测试（会起一个真的 Python 侧车）
+        run: npm test
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: koishi-plugin
+          path: adapters/koishi/lib
+

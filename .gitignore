@@ -12,6 +12,9 @@ venv/
 *.db-shm
 .env
 .env.*
+node_modules/
+lib/
+dist/
 
 # 跑宿主集成测试时宿主会在当前目录留下这些
 data/
