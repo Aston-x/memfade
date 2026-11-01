@@ -191,3 +191,29 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
             self.engine.remember(draft, SCOPE)
         await self.engine.consolidate(SCOPE)
         self.assertIsNotNone(self.engine.store.get(keep.id), "置顶的记忆不该被淘汰")
+
+    async def test_conflict_detected_without_subject(self):
+        """模型没填 subject/predicate 时，也要能发现「同一件事的两个版本」。"""
+
+        old = self.engine.remember(
+            MemoryDraft(content="许杏玖住在杭州", kind=MemoryKind.SEMANTIC, importance=0.85), SCOPE
+        )
+        new = self.engine.remember(
+            MemoryDraft(content="许杏玖住在上海", kind=MemoryKind.SEMANTIC, importance=0.85), SCOPE
+        )
+        self.assertIsNotNone(old)
+        self.assertIsNotNone(new)
+        report = await self.engine.consolidate(SCOPE)
+        self.assertGreaterEqual(report.superseded, 1, "旧值该被取代")
+
+    async def test_different_topics_are_not_conflicts(self):
+        a = self.engine.remember(
+            MemoryDraft(content="季怡在做小红书账号", kind=MemoryKind.SEMANTIC, importance=0.8), SCOPE
+        )
+        b = self.engine.remember(
+            MemoryDraft(content="季怡在备赛蓝桥杯", kind=MemoryKind.SEMANTIC, importance=0.8), SCOPE
+        )
+        self.assertIsNotNone(a)
+        self.assertIsNotNone(b)
+        report = await self.engine.consolidate(SCOPE)
+        self.assertEqual(report.superseded, 0, "不同的事不该被判成矛盾")

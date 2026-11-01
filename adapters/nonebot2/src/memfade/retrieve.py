@@ -409,6 +409,8 @@ def _clip(text: str, limit: int) -> str:
 
     单条记忆可能有几百字（比如一段赛制说明），
     整段塞进 prompt 既费 token 又淹掉其它记忆。
+
+    截断点尽量落在标点上——断在半句里读起来像坏掉的。
     """
 
     if limit <= 0:
@@ -416,5 +418,11 @@ def _clip(text: str, limit: int) -> str:
     body = (text or "").strip()
     if len(body) <= limit:
         return body
-    return body[: max(1, limit - 1)].rstrip("，,、；; ") + "…"
+    head = body[: max(1, limit - 1)]
+    # 回退到最后一个标点，句子才完整；找不到就硬截
+    for mark in ("。", "；", "!", "?", "!", "，", ",", "、", " "):
+        index = head.rfind(mark)
+        if index >= limit // 3:
+            return head[: index + 1].rstrip() + "…"
+    return head.rstrip("，,、；; ") + "…"
 

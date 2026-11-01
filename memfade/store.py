@@ -155,6 +155,36 @@ def _normalize_pairs(raw: list[tuple[float, int]]) -> list[tuple[int, float]]:
     return out
 
 
+def _same_fact_different_tail(a: str, b: str) -> bool:
+    """两条内容像「同一件事的两个版本」。
+
+    判据：**足够长的共同前缀 + 不同的结尾**。
+
+    「许杏玖住在杭州」vs「许杏玖住在上海」→ 前缀「许杏玖住在」相同，
+    结尾不同 → 是矛盾。
+
+    「季怡在做小红书账号」vs「季怡在备赛蓝桥杯」→ 前缀只有「季怡在」，
+    太短 → 不是矛盾。
+
+    没有 subject/predicate 时，这是矛盾检测唯一的抓手。
+    """
+
+    from .textutil import normalize
+
+    na, nb = normalize(a), normalize(b)
+    if not na or not nb:
+        return False
+    common = 0
+    while common < min(len(na), len(nb)) and na[common] == nb[common]:
+        common += 1
+    if common < 4:
+        return False
+    tail_a, tail_b = na[common:], nb[common:]
+    if not tail_a or not tail_b:
+        return False
+    return tail_a != tail_b
+
+
 class MemoryStore:
     """记忆存储。线程安全（内部一把写锁）。"""
 
@@ -569,7 +599,16 @@ class MemoryStore:
             self._conn.commit()
 
     def find_conflicts(self, scope_key: str, *, limit: int = 500) -> list[tuple[Memory, Memory]]:
-        """找出「同主语同谓语、不同宾语」的记忆对——即互相矛盾的事实。"""
+        """找出互相矛盾的记忆对。
+
+        两条路：
+
+        1. **结构化**——同 ``(subject, predicate)`` 但 ``object`` 不同
+           （「他住在北京」后来变成「他住在上海」）；
+        2. **兜底**——内容有足够长的共同前缀、但结尾不同。
+           模型没填 subject/predicate 时也能抓到
+           （「许杏玖住在杭州」vs「许杏玖住在上海」）。
+        """
 
         rows = self.iter_scope(scope_key, statuses=("active", "fading"), limit=limit)
         buckets: dict[tuple[str, str], list[Memory]] = {}
@@ -586,6 +625,19 @@ class MemoryStore:
                 older, newer = group[i], group[i + 1]
                 if older.object and newer.object and older.object != newer.object:
                     pairs.append((older, newer))
+        # 兜底：结构化对没覆盖到的，按内容前缀再扫一遍
+        seen = {(a.id, b.id) for a, b in pairs}
+        for i in range(len(rows)):
+            for j in range(i + 1, len(rows)):
+                a, b = rows[i], rows[j]
+                key = (a.id, b.id)
+                if key in seen:
+                    continue
+                if a.subject and a.predicate:
+                    continue  # 已经有结构化字段，走结构化那条路
+                if _same_fact_different_tail(a.content, b.content):
+                    pairs.append((a, b))
+                    seen.add(key)
         return pairs
 
     def mark_superseded(self, memory_id: int, superseded_by: int) -> None:

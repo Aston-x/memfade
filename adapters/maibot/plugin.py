@@ -771,9 +771,14 @@ class MemFadePlugin(MaiBotPlugin):
     @Tool(
         "remember_something",
         description="把一件值得长期记住的事写进记忆库。用户明确表示希望被记住、"
-        "承诺、约定、生日、偏好等适合长期保留的信息使用。",
+        "承诺、约定、生日、偏好等适合长期保留的信息使用。"
+        "一次只记一件事，写成一句话（30 字以内）；"
+        "同时给出「谁-怎么样-什么」三段，记忆系统靠它发现互相矛盾的事实。",
         parameters={
-            "content": {"type": "string", "description": "要记住的内容，一句完整的话", "required": True},
+            "content": {"type": "string", "description": "要记住的内容，一句话，30 字以内", "required": True},
+            "subject": {"type": "string", "description": "谁（例：许杏玖）"},
+            "predicate": {"type": "string", "description": "怎么样（例：住在 / 喜欢 / 参加）"},
+            "object": {"type": "string", "description": "什么（例：上海 / 辣的食物 / 第18届蓝桥杯）"},
             "kind": {
                 "type": "string",
                 "description": "类型：semantic 事实 / preference 喜好 / episodic 事件 / relation 关系",
@@ -785,6 +790,9 @@ class MemFadePlugin(MaiBotPlugin):
         """让模型自己写入一条记忆。"""
 
         message = kwargs.get("message")
+        subject = str(kwargs.get("subject") or "").strip()
+        predicate = str(kwargs.get("predicate") or "").strip()
+        object_value = str(kwargs.get("object") or "").strip()
         engine = self._engine
         text = (content or "").strip()
         if engine is None or not text:
@@ -800,6 +808,9 @@ class MemFadePlugin(MaiBotPlugin):
             content=text,
             kind=memory_kind,
             importance=0.8,
+            subject=subject,
+            predicate=predicate,
+            object=object_value,
             cross_scope=bool(self.config.memory.cross_session),
             source="tool",
         )
@@ -1001,6 +1012,9 @@ class MemFadePlugin(MaiBotPlugin):
                     "content": d.content,
                     "kind": d.kind.value,
                     "importance": round(d.importance, 3),
+                    "subject": d.subject,
+                    "predicate": d.predicate,
+                    "object": d.object,
                     "cross_scope": d.cross_scope,
                 }
                 for d in result.drafts
