@@ -13,6 +13,7 @@ profile_items = 6
 profile_chars = 300
 extract_enabled = true
 extract_every_n = 3
+flush_idle_minutes = 10
 extract_min_messages = 2
 min_importance = 0.35
 use_host_llm = true

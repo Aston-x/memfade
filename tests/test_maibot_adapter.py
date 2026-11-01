@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any, Dict, List
@@ -498,6 +499,29 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         plugin.config.plugin.enabled = False
         await plugin.handle_after_process(message=make_message("你好"))
         self.assertFalse(plugin._ctx.maisaka.context.appended)
+
+    async def test_idle_flush_extracts_short_conversations(self):
+        """一天只聊两句的机器人，也要能抽出记忆。
+
+        实机发现：许杏玖的群里和私聊各只来了 2 条消息，
+        而 extract_every_n=3 —— 永远攒不到阈值，记忆一直是空的。
+        所以加了「会话安静下来就冲刷」。
+        """
+
+        plugin = self.plugin
+        plugin._ctx.llm.reply = (
+            '[{"content":"许杏玖喜欢辣的食物","kind":"semantic","importance":0.8,'
+            '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+        )
+        # 复现实机配置：攒够 3 条才抽
+        plugin.config.memory.extract_every_n = 3
+        # 只来一条消息，达不到 extract_every_n=3
+        await plugin.handle_after_process(message=make_message("我喜欢吃辣"))
+        self.assertEqual(plugin._engine.store.count("qq:session:sess-1"), 0)
+        # 假装这段对话已经安静了 30 分钟
+        plugin._buffer_at["qq:session:sess-1"] = time.time() - 1800
+        await plugin._flush_idle_buffers()
+        self.assertEqual(plugin._engine.store.count("qq:session:sess-1"), 1)
 
     async def test_stats_api(self):
         stats = await self.plugin.memfade_stats()

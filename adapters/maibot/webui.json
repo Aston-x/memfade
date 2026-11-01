@@ -91,6 +91,22 @@
                 "source": "overview",
                 "field": "by_status.archived"
               }
+            },
+            {
+              "type": "stat",
+              "label": "已知会话",
+              "value": {
+                "source": "overview",
+                "field": "known_scopes.length"
+              }
+            },
+            {
+              "type": "stat",
+              "label": "待抽取消息",
+              "value": {
+                "source": "overview",
+                "field": "buffered_total"
+              }
             }
           ]
         },

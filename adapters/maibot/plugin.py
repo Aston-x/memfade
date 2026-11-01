@@ -80,6 +80,7 @@ class MemorySectionConfig(PluginConfigBase):
 
     extract_enabled: bool = Field(default=True, description="是否从对话中抽取记忆")
     extract_every_n: int = Field(default=3, description="每隔多少轮抽取一次")
+    flush_idle_minutes: int = Field(default=10, description="会话安静多久后把攒下的消息抽成记忆")
     extract_min_messages: int = Field(default=2, description="一轮里至少几条消息才抽取")
     min_importance: float = Field(default=0.35, description="低于此显著性的内容不入库")
 
@@ -209,9 +210,17 @@ class MemFadePlugin(MaiBotPlugin):
         super().__init__()
         self._engine: Optional[MemoryEngine] = None
         self._buffer: Dict[str, List[Dict[str, Any]]] = {}
+        self._buffer_at: Dict[str, float] = {}
+        """每个会话最后一次收到消息的时间，用来判断「安静下来了」。"""
+
+        self._scopes: set[str] = set()
+        """见过的会话键，后台整理任务要遍历。"""
+
         self._counter: Dict[str, int] = {}
         self._last_maintain: float = 0.0
         self._maintain_task: Optional[asyncio.Task] = None
+        self._maintain_ticks: int = 0
+        """后台维护循环的心跳次数。用来确认循环真的在跑。"""
         self._last_search: List[Dict[str, Any]] = []
         self._recent_user_text: Dict[str, str] = {}
         """每个会话最近一条用户消息——回复器钩子拿不到 items，用它做检索词。"""
@@ -224,16 +233,62 @@ class MemFadePlugin(MaiBotPlugin):
         """插件加载：建引擎、起整理任务。"""
 
         self._rebuild_engine()
+        self._maintain_task = asyncio.create_task(self._maintenance_loop())
 
     async def on_unload(self) -> None:
         """插件卸载：收尾。"""
 
         if self._maintain_task is not None:
             self._maintain_task.cancel()
+            try:
+                await self._maintain_task
+            except (asyncio.CancelledError, Exception):
+                pass
             self._maintain_task = None
         if self._engine is not None:
             self._engine.close()
             self._engine = None
+
+    async def _maintenance_loop(self) -> None:
+        """后台循环：空闲冲刷 + 定期整理。
+
+        机器人一天可能只收到两三条消息，光靠「攒够 N 条再抽」
+        永远抽不出来；「说完一段安静下来」正是该总结的时刻。
+        """
+
+        try:
+            while True:
+                await asyncio.sleep(60)
+                try:
+                    await self._flush_idle_buffers()
+                    await self._maintain_all_scopes()
+                    self._maintain_ticks += 1
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    self.ctx.logger.warning("[memfade] 后台维护出错: %s", exc)
+        except asyncio.CancelledError:
+            return
+
+    async def _maintain_all_scopes(self) -> None:
+        """对所有见过的会话跑一遍整理。"""
+
+        engine = self._engine
+        if engine is None:
+            return
+        interval = max(60, int(self.config.fade.maintain_interval_minutes) * 60)
+        now = time.time()
+        if now - self._last_maintain < interval:
+            return
+        self._last_maintain = now
+        for key in list(self._scopes):
+            scope = Scope(platform="qq", chat_type="session", chat_id=key.split(":", 2)[-1])
+            try:
+                report = await engine.consolidate(scope)
+                if report.decayed or report.merged or report.superseded:
+                    self.ctx.logger.info("[memfade] 整理完成（%s）: %s", key, report.as_dict())
+            except Exception as exc:
+                self.ctx.logger.warning("[memfade] 整理失败（%s）: %s", key, exc)
 
     async def on_config_update(self, scope: str, config_data: dict[str, object], version: str) -> None:
         """配置热重载。"""
@@ -366,6 +421,7 @@ class MemFadePlugin(MaiBotPlugin):
         if session_id and text:
             # 回复器钩子拿不到 items，用这里旁听到的最近一条用户消息做检索词
             self._recent_user_text[session_id] = text
+        self._scopes.add(scope.key())
 
         # 1) 收集对话，达到节奏就抽取
         if self.config.memory.extract_enabled and text:
@@ -375,8 +431,7 @@ class MemFadePlugin(MaiBotPlugin):
                 )
             await self._maybe_extract(parsed, scope)
 
-        # 2) 顺路做一次整理（按间隔节流）
-        await self._maybe_maintain(scope)
+        # 2) 整理交给后台循环（_maintenance_loop），这里不再重复触发
         return None
 
     @HookHandler(
@@ -614,6 +669,7 @@ class MemFadePlugin(MaiBotPlugin):
         key = scope.key()
         buffer = self._buffer.setdefault(key, [])
         buffer.append({"role": "user", "content": parsed.get("text") or ""})
+        self._buffer_at[key] = time.time()
         count = self._counter.get(key, 0) + 1
         self._counter[key] = count
         every = max(1, int(self.config.memory.extract_every_n))
@@ -636,8 +692,46 @@ class MemFadePlugin(MaiBotPlugin):
             # 抽取失败不丢内容，放回缓冲区下次一起试
             buffer.extend(pending)
 
+    async def _flush_idle_buffers(self) -> None:
+        """把「安静下来」的会话攒下的消息抽成记忆。
+
+        为什么需要这个：机器人一天可能只收到两三条消息，
+        而 ``extract_every_n`` 是 3——那点消息永远攒不到阈值，
+        记忆就一直是空的。真实对话里「说完一段安静下来」
+        正是该总结的时刻。
+        """
+
+        engine = self._engine
+        if engine is None or not self.config.memory.extract_enabled:
+            return
+        idle_seconds = max(0, int(self.config.memory.flush_idle_minutes)) * 60
+        if idle_seconds <= 0:
+            return
+        now = time.time()
+        for key in list(self._buffer.keys()):
+            last = self._buffer_at.get(key, 0.0)
+            if not last or now - last < idle_seconds:
+                continue
+            pending = list(self._buffer.get(key) or [])
+            if not pending:
+                continue
+            self._buffer[key] = []
+            self._buffer_at.pop(key, None)
+            self._counter.pop(key, None)
+            scope = Scope(platform="qq", chat_type="session", chat_id=key.split(":", 2)[-1])
+            try:
+                written = await engine.remember_from_messages(pending, scope, source=key)
+                if written:
+                    self.ctx.logger.info(
+                        "[memfade] 空闲冲刷抽取到 %d 条新记忆（%s）", len(written), key
+                    )
+            except Exception as exc:
+                self.ctx.logger.warning("[memfade] 空闲冲刷失败: %s", exc)
+                self._buffer[key] = pending
+                self._buffer_at[key] = now
+
     async def _maybe_maintain(self, scope: Scope) -> None:
-        """整理任务（带节流）。"""
+        """整理单个会话（带节流）。后台循环用的是 _maintain_all_scopes。"""
 
         engine = self._engine
         if engine is None:
@@ -834,6 +928,9 @@ class MemFadePlugin(MaiBotPlugin):
         stats = engine.stats()
         stats["enabled"] = bool(self.config.plugin.enabled)
         stats["db_path"] = engine.store.db_path
+        stats["maintain_ticks"] = self._maintain_ticks
+        stats["known_scopes"] = sorted(self._scopes)
+        stats["buffered"] = {k: len(v) for k, v in self._buffer.items() if v}
         return stats
 
     @API("memfade_overview", description="记忆引擎总览：各淡化档位分布与最近记忆", version="1")
@@ -869,6 +966,10 @@ class MemFadePlugin(MaiBotPlugin):
             "by_status": counts,
             "chart": chart,
             "recent": recent,
+            "maintain_ticks": self._maintain_ticks,
+            "known_scopes": sorted(self._scopes),
+            "buffered": {k: len(v) for k, v in self._buffer.items() if v},
+            "buffered_total": sum(len(v) for v in self._buffer.values() if v),
         }
 
     @API("memfade_do_search", description="在记忆库里检索（WebUI 动作）", version="1")
