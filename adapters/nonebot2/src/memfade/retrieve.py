@@ -36,7 +36,7 @@ from typing import Any, Optional, Sequence
 from .config import MemFadeConfig
 from .decay import DEFAULT_POLICY, FadePolicy, effective_strength, resolve_status
 from .store import MemoryStore
-from .textutil import estimate_tokens, fts_text, longest_common_substring, token_set
+from .textutil import estimate_tokens, fts_text, longest_common_substring, similarity, token_set
 from .types import Memory, MemoryStatus, RetrievalHit
 
 
@@ -270,8 +270,9 @@ class MemoryRetriever:
         fact_lines: list[str] = []
         echo_lines: list[str] = []
         skip = exclude_ids or set()
+        picked: list[str] = []
 
-        for hit in hits:
+        for hit in self._diversify(hits):
             if hit.memory.id in skip:
                 continue
             if hit.tier == "fact":
@@ -280,6 +281,7 @@ class MemoryRetriever:
                 if used + cost > cfg.budget_tokens and (fact_lines or echo_lines):
                     break
                 fact_lines.append(line)
+                picked.append(hit.memory.content)
                 used += cost
                 context.facts.append(hit)
             else:
@@ -292,6 +294,7 @@ class MemoryRetriever:
                 if used + cost > cfg.budget_tokens and (fact_lines or echo_lines):
                     continue
                 echo_lines.append(line)
+                picked.append(hit.memory.content)
                 used += cost
                 context.echoes.append(hit)
 
@@ -303,6 +306,40 @@ class MemoryRetriever:
         context.text = "\n\n".join(blocks)
         context.token_estimate = estimate_tokens(context.text) if context.text else 0
         return context
+
+    def _diversify(self, hits: Sequence[RetrievalHit]) -> list[RetrievalHit]:
+        """MMR 多样性重排。
+
+        用户抱怨的「重复语段太多」有两种来源：库里存了两份（去重解决），
+        以及**一次注入里塞了好几条讲同一件事的**（这里解决）。
+
+        做法（MMR）：每选一条，就用它去压低后面候选的得分——
+        越像已选内容的候选，排得越靠后。
+        """
+
+        lambda_ = self.config.retrieval.mmr_lambda
+        remaining = list(hits)
+        if lambda_ <= 0 or len(remaining) < 2:
+            return remaining
+        ordered: list[RetrievalHit] = []
+        chosen: list[str] = []
+        while remaining:
+            best: Optional[RetrievalHit] = None
+            best_value = float("-inf")
+            for hit in remaining:
+                redundancy = 0.0
+                if chosen:
+                    redundancy = max(similarity(hit.memory.content, text) for text in chosen)
+                value = hit.score - lambda_ * redundancy
+                if value > best_value:
+                    best_value = value
+                    best = hit
+            if best is None:
+                break
+            ordered.append(best)
+            chosen.append(best.memory.content)
+            remaining.remove(best)
+        return ordered
 
     def _render_fact(self, hit: RetrievalHit) -> str:
         mem = hit.memory

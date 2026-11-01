@@ -84,6 +84,21 @@ class TestRetrieval(unittest.TestCase):
         self.assertEqual(len(hits), 2)
         self.assertEqual(hits[0].memory.content, important.content)
 
+    def test_mmr_avoids_duplicate_topics(self):
+        """一次注入里不该塞好几条讲同一件事的。"""
+
+        a = MemoryDraft(content="蓝桥杯报名截止到12月18号", kind=MemoryKind.SEMANTIC, importance=0.85)
+        b = MemoryDraft(content="蓝桥杯报名时间是10月8号开始", kind=MemoryKind.SEMANTIC, importance=0.85)
+        c = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8)
+        for draft in (a, b, c):
+            self.engine.remember(draft, SCOPE)
+        context = self.engine.build_context("蓝桥杯报名", SCOPE)
+        contents = [hit.memory.content for hit in context.facts]
+        self.assertEqual(len(contents), 3)
+        # 前两条讲同一件事，应该被第三条（不同话题）插到中间或后面
+        self.assertIn(c.content, contents)
+        self.assertLess(contents.index(b.content), contents.index(c.content) + 1)
+
     def test_faded_memory_moves_to_echo_tier(self):
         draft = MemoryDraft(content="上周三去吃了炸鸡", kind=MemoryKind.EPISODIC, importance=0.3)
         draft.importance = 0.4

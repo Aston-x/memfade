@@ -1021,6 +1021,40 @@ class MemFadePlugin(MaiBotPlugin):
             ],
         }
 
+    @API("memfade_curve", description="读取淡化曲线（各记忆种类的保留率）", version="1")
+    async def memfade_curve(self, days: int = 60) -> Dict[str, Any]:
+        """淡化曲线：给面板看「记忆是怎么一点点退场的」。"""
+
+        from memfade.decay import decay_curve
+        from memfade.types import MemoryKind
+
+        span = max(7, min(365, int(days)))
+        curve = decay_curve(MemoryKind.EPISODIC, importance=0.4, recall_count=0, days=span)
+        points = [{"day": i, "value": value} for i, value in enumerate(curve)]
+
+        milestones = (7, 30, 90, 365)
+        table = []
+        labels = {
+            MemoryKind.EPISODIC: "事件",
+            MemoryKind.SEMANTIC: "事实",
+            MemoryKind.PREFERENCE: "喜好",
+            MemoryKind.RELATION: "关系",
+            MemoryKind.SKILL: "做法",
+        }
+        for kind in (
+            MemoryKind.EPISODIC,
+            MemoryKind.SEMANTIC,
+            MemoryKind.PREFERENCE,
+            MemoryKind.RELATION,
+            MemoryKind.SKILL,
+        ):
+            row = {"kind": labels.get(kind, kind.value)}
+            for days in milestones:
+                value = decay_curve(kind, importance=0.5, recall_count=0, days=days)
+                row[f"d{days}"] = value[-1]
+            table.append(row)
+        return {"points": points, "table": table, "days": span}
+
 
 def create_plugin() -> MemFadePlugin:
     """创建插件实例。"""

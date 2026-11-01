@@ -12,6 +12,10 @@
         "overview": {
           "api": "memfade_overview",
           "version": "1"
+        },
+        "curve": {
+          "api": "memfade_curve",
+          "version": "1"
         }
       },
       "actions": {
@@ -90,6 +94,47 @@
             "source": "overview",
             "field": "chart"
           }
+        },
+        {
+          "type": "chart",
+          "label": "一次性事件的保留曲线（多少天后淡出）",
+          "chart_type": "line",
+          "x": "day",
+          "y": "value",
+          "value": {
+            "source": "curve",
+            "field": "points"
+          }
+        },
+        {
+          "type": "table",
+          "label": "各类记忆的保留率",
+          "value": {
+            "source": "curve",
+            "field": "table"
+          },
+          "columns": [
+            {
+              "field": "kind",
+              "label": "种类"
+            },
+            {
+              "field": "d7",
+              "label": "7 天后"
+            },
+            {
+              "field": "d30",
+              "label": "30 天后"
+            },
+            {
+              "field": "d90",
+              "label": "90 天后"
+            },
+            {
+              "field": "d365",
+              "label": "1 年后"
+            }
+          ]
         },
         {
           "type": "table",
