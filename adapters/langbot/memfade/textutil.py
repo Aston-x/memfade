@@ -313,7 +313,12 @@ _STOPWORDS = frozenset(
     }
 )
 
-_FUNCTION_CHARS = frozenset("的了是在和也就都而及与着或这那我你他她它们个些不没很更最会要能有被把给让个所之其而且但却呢吧啊吗嘛哦嗯")
+_FUNCTION_CHARS = frozenset(
+    "的了是在和也就都而及与着或这那我你他她它们个些不没很更最会要能有被把给让"
+    "个所之其而且但却呢吧啊吗嘛哦嗯"
+    # 疑问词：搜「什么」「怎么样」没有意义，但它们会命中一大片记忆
+    "什么么怎哪谁何呀啦哇哈嘿唔呃额哎唉咦为啥呗咧噻样"
+)
 
 
 def is_function_token(token: str) -> bool:
