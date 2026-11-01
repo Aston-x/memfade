@@ -84,6 +84,15 @@ def cjk_unigrams(text: str) -> list[str]:
     return list(dict.fromkeys(_CJK_RE.findall(key)))
 
 
+def content_chars(text: str) -> list[str]:
+    """单个实义汉字（去掉「的」「了」「是」这类虚词）。
+
+    单字兜底通道用这个：拿「的」去检索等于跟整本语料库匹配。
+    """
+
+    return [c for c in cjk_unigrams(text) if c not in _FUNCTION_CHARS]
+
+
 def fts_text(text: str) -> str:
     """喂给 FTS5 的索引串：二元组之间用空格隔开。
 
@@ -305,6 +314,52 @@ _STOPWORDS = frozenset(
 )
 
 _FUNCTION_CHARS = frozenset("的了是在和也就都而及与着或这那我你他她它们个些不没很更最会要能有被把给让个所之其而且但却呢吧啊吗嘛哦嗯")
+
+
+def is_function_token(token: str) -> bool:
+    """这个 token 是不是「全由虚词拼起来的组合」。
+
+    二元组索引会把「在的」「的是」「时的」这种组合也当成词。
+    它们几乎出现在每一句中文里——拿它们去检索，
+    等于跟整本语料库匹配，命中什么都不奇怪。
+
+    所以**查询侧**要把这类 token 剔掉：
+    两个字符都是虚词 → 丢掉。
+    「存在」保留（存是实词），「在的」丢掉（两个都是虚词）。
+    """
+
+    if len(token) < 2:
+        return True
+    return all(ch in _FUNCTION_CHARS for ch in token)
+
+
+def query_terms(text: str) -> tuple[list[str], list[str]]:
+    """把查询拆成「多字词」和「单字」两组，并滤掉虚词组合。
+
+    多字词走 BM25 主通道，单字走兜底通道（见 ``store.search_substring``）。
+    两组都不含虚词组合——否则「现在的」这种查询会命中一大堆无关记忆。
+    """
+
+    key = normalize(text)
+    if not key:
+        return [], []
+
+    multi: list[str] = []
+    uni: list[str] = []
+    for run in _CJK_RUN_RE.findall(key):
+        if len(run) == 1:
+            uni.append(run)
+        else:
+            multi.extend(run[i : i + 2] for i in range(len(run) - 1))
+    for word in _WORD_RE.findall(key):
+        lowered = word.lower()
+        if len(lowered) == 1:
+            uni.append(lowered)
+        else:
+            multi.append(lowered)
+    multi = [t for t in dict.fromkeys(multi) if not is_function_token(t)]
+    uni = [t for t in dict.fromkeys(uni) if t not in _FUNCTION_CHARS]
+    return multi, uni
 
 
 def content_words(text: str, limit: int = 8) -> list[str]:

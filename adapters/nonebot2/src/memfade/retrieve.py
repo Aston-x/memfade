@@ -38,12 +38,12 @@ from .config import MemFadeConfig
 from .decay import DEFAULT_POLICY, FadePolicy, effective_strength, resolve_status, stability_days
 from .store import MemoryStore
 from .textutil import (
-    cjk_unigrams,
+    content_words,
+    content_chars,
     estimate_tokens,
     fts_text,
     longest_common_substring,
     similarity,
-    token_set,
 )
 from .types import Memory, MemoryStatus, RetrievalHit
 
@@ -198,7 +198,7 @@ class MemoryRetriever:
             # 单字查询（「辣」）在多字词通道里找不到东西，
             # 但「被问起就想起来」不能因此失效。
             candidates = self.store.search_substring(
-                cjk_unigrams(query),
+                content_chars(query),
                 scope_key,
                 limit=cfg.channel_candidates,
                 kinds=kinds,
@@ -243,9 +243,10 @@ class MemoryRetriever:
         3. 主通道必须一无所获——词面已经命中时，多字词的结果永远更准。
         """
 
-        from .textutil import cjk_unigrams
+        from .textutil import content_chars
 
-        chars = cjk_unigrams(query)
+        # 只用实义字：「的」「了」「是」拿去检索等于跟整本语料库匹配。
+        chars = content_chars(query)
         if not chars or len(chars) > int(cfg.uni_max_query_chars):
             return []
         limit = int(cfg.uni_max_hits) + 1
@@ -314,11 +315,14 @@ class MemoryRetriever:
 
         if not hits or boost <= 0:
             return hits
-        top_tokens = token_set(hits[0].memory.content)
+        # 用**实词**（滤掉虚词组合）算重合，而不是全部二元组：
+        # 两条记忆共享「的食」「在的」不代表它们讲同一件事，
+        # 共享「蓝桥杯」「季怡」才代表。
+        top_tokens = set(content_words(hits[0].memory.content, limit=24))
         if not top_tokens:
             return hits
         for hit in hits[1:]:
-            shared = len(token_set(hit.memory.content) & top_tokens)
+            shared = len(set(content_words(hit.memory.content, limit=24)) & top_tokens)
             if shared >= 2:
                 hit.score = round(hit.score + boost * min(1.0, shared / 6.0), 6)
         hits.sort(key=lambda h: (h.score, h.memory.importance, h.memory.created_at), reverse=True)
@@ -597,10 +601,26 @@ class MemoryRetriever:
 
 
 def _compose_fact(mem: Memory) -> str:
-    """把 (subject, predicate, object) 拼成一句可读的话。"""
+    """把 (subject, predicate, object) 拼成一句可读的话。
+
+    ⚠ **只在原文缺主语时才拼**。
+    原文已经带主语的话，再拼一遍会重复：
+    「第18届蓝桥杯」+「统一口径」+「官方口径」
+    → 「第18届蓝桥杯统一口径官方口径」（原文明明就是「第18届蓝桥杯官方口径」）。
+
+    反过来，原文只有宾语的时候（内容写成「辣的食物」），
+    拼上主语才成为一句完整的话——那才是三元组该干的活。
+    """
 
     if not (mem.subject and mem.predicate and mem.object):
         return ""
+    if mem.subject in mem.content:
+        return ""
+    # 谓语的尾巴已经在主语里出现过就别再说一遍：
+    # 「软件赛与电子赛报名」+「按学校报名」→「软件赛与电子赛报名按学校报名」。
+    tail = mem.predicate[-2:]
+    if len(tail) >= 2 and tail in mem.subject:
+        return f"{mem.subject}{mem.object}"
     return f"{mem.subject}{mem.predicate}{mem.object}"
 
 

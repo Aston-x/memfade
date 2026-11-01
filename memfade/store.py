@@ -618,9 +618,11 @@ class MemoryStore:
 
         if not self.has_fts or not query:
             return []
-        from .textutil import bigrams
+        from .textutil import query_terms
 
-        terms = bigrams(query)
+        # ⚠ 查询侧要滤掉「在的」「的是」这种全虚词二元组：
+        # 它们几乎出现在每一句中文里，拿它们检索等于跟整本语料库匹配。
+        terms, _uni = query_terms(query)
         if not terms:
             return []
         # ⚠ 必须用 OR：FTS5 里空格分隔的多个词是**隐式 AND**，

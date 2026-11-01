@@ -7,6 +7,7 @@ import time
 import unittest
 
 from memfade.types import MemoryDraft, MemoryKind, MemoryStatus, Scope
+from memfade.textutil import fts_text
 from tests.helpers import temp_engine
 
 
@@ -88,6 +89,52 @@ class TestRetrieval(unittest.TestCase):
         hits = self.engine.recall("辣", SCOPE, require_match=True)
         self.assertEqual(len(hits), 1, "「辣」不该命中只有「香菜」的记忆")
         self.assertEqual(hits[0].memory.content, both.content)
+
+    def test_rendered_fact_does_not_duplicate_subject(self):
+        """原文已经有主语了，别再拼一遍。
+
+        「第18届蓝桥杯」+「统一口径」+「官方口径」拼出来是
+        「第18届蓝桥杯统一口径官方口径」——原文明明就是「第18届蓝桥杯官方口径」。
+        """
+
+        draft = MemoryDraft(
+            content="第18届蓝桥杯官方口径",
+            kind=MemoryKind.SEMANTIC,
+            importance=0.8,
+        )
+        self.engine.remember(draft, SCOPE)
+        mem = self.engine.store.iter_scope(SCOPE.key())[0]
+        mem.subject = "第18届蓝桥杯"
+        mem.predicate = "统一口径"
+        mem.object = "官方口径"
+        self.engine.store.update(mem, fts_text(mem.content))
+        context = self.engine.build_context("蓝桥杯", SCOPE)
+        self.assertIn("第18届蓝桥杯官方口径", context.text)
+        self.assertNotIn("统一口径官方口径", context.text)
+
+    def test_rendered_fact_adds_missing_subject(self):
+        """原文缺主语时，三元组正好补上。"""
+
+        draft = MemoryDraft(content="辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8)
+        self.engine.remember(draft, SCOPE)
+        mem = self.engine.store.iter_scope(SCOPE.key())[0]
+        mem.subject = "许杏玖"
+        mem.predicate = "喜欢"
+        mem.object = "辣的食物"
+        self.engine.store.update(mem, fts_text(mem.content))
+        context = self.engine.build_context("辣", SCOPE)
+        self.assertIn("许杏玖喜欢辣的食物", context.text)
+
+    def test_function_word_query_does_not_match_everything(self):
+        """「在的」这种全虚词二元组不能拿去检索。
+
+        二元组索引里「在的」几乎每条都有，拿它当查询词等于跟整本语料库匹配。
+        """
+
+        self.engine.remember(MemoryDraft(content="季怡现在的铁子与加价仲裁无关", importance=0.6), SCOPE)
+        self.engine.remember(MemoryDraft(content="蓝桥杯报名12月18日截止", importance=0.6), SCOPE)
+        hits = self.engine.recall("不存在的词xyz", SCOPE, require_match=True)
+        self.assertEqual(len(hits), 0, "无意义的查询不该命中任何记忆")
 
     def test_multi_word_query_uses_or_semantics(self):
         """多词查询必须是 OR，不是 AND。
