@@ -212,6 +212,8 @@ class MemFadePlugin(MaiBotPlugin):
         self._last_maintain: float = 0.0
         self._maintain_task: Optional[asyncio.Task] = None
         self._last_search: List[Dict[str, Any]] = []
+        self._recent_user_text: Dict[str, str] = {}
+        """每个会话最近一条用户消息——回复器钩子拿不到 items，用它做检索词。"""
 
     # ------------------------------------------------------------------ #
     # 生命周期
@@ -359,6 +361,10 @@ class MemFadePlugin(MaiBotPlugin):
             return None
         text = parsed.get("text") or ""
         scope = self._scope_of(parsed)
+        session_id = parsed.get("session_id") or ""
+        if session_id and text:
+            # 回复器钩子拿不到 items，用这里旁听到的最近一条用户消息做检索词
+            self._recent_user_text[session_id] = text
 
         # 1) 收集对话，达到节奏就抽取
         if self.config.memory.extract_enabled and text:
@@ -384,19 +390,68 @@ class MemFadePlugin(MaiBotPlugin):
         return await self._inject_into_items(kwargs)
 
     @HookHandler(
-        "maisaka.replyer.before_model_request",
+        "maisaka.replyer.before_request",
         name="memfade_inject_replyer",
-        description="把记忆注入回复器实际发送的上下文",
+        description="把记忆注入回复器的额外提示词",
         mode=HookMode.BLOCKING,
         order=HookOrder.NORMAL,
         error_policy=ErrorPolicy.SKIP,
     )
-    async def handle_replyer_before_model_request(
-        self, **kwargs: Any
-    ) -> Optional[Dict[str, Any]]:
-        """回复器发起模型请求前注入记忆。"""
+    async def handle_replyer_before_request(self, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """回复器发起模型请求前注入记忆。
 
-        return await self._inject_into_items(kwargs)
+        这里走 ``extra_prompt`` 而不是改 Context Items：
+        它是宿主为插件预留的「追加一段提示词」通道，
+        不用序列化/反序列化 item，格式出错的风险小得多
+        （群管理插件在生产里也是这么用的）。
+        """
+
+        return await self._inject_into_extra_prompt(kwargs)
+
+    async def _inject_into_extra_prompt(self, kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """把记忆追加到本次回复的 extra_prompt。"""
+
+        engine = self._engine
+        if engine is None or not self.config.plugin.enabled:
+            return None
+        if not self.config.memory.inject_enabled:
+            return None
+        session_id = str(kwargs.get("session_id") or "")
+        # 优先用宿主给的「为什么回复」当检索词；没有就用旁听到的最近一条用户消息
+        query = str(kwargs.get("reply_reason") or "").strip()
+        if not query:
+            query = self._recent_user_text.get(session_id, "")
+        if not query:
+            return None
+        scope = Scope(platform="qq", chat_type="session", chat_id=session_id or "unknown")
+        try:
+            vector = None
+            if self.config.memory.use_host_embedding:
+                vector = await engine.embed_query(query)
+            profile = engine.retriever.profile(
+                scope.key(),
+                max_items=max(0, int(self.config.memory.profile_items)),
+                max_chars=max(0, int(self.config.memory.profile_chars)),
+            )
+            context = engine.build_context(
+                query,
+                scope,
+                query_vector=vector,
+                header=self.config.memory.inject_header or "记忆",
+                exclude_ids=profile.ids,
+            )
+            body = self._wrap_context(context.text, profile.text)
+            if not body:
+                return None
+            modified = dict(kwargs)
+            base = str(modified.get("extra_prompt") or "").strip()
+            modified["extra_prompt"] = (base + "\n\n" + body).strip() if base else body
+            if context.hits:
+                engine.reinforce([hit.memory.id for hit in context.hits])
+            return {"success": True, "action": "continue", "modified_kwargs": modified}
+        except Exception as exc:
+            self.ctx.logger.warning("[memfade] 注入回复提示失败: %s", exc)
+            return None
 
     async def _inject_into_items(self, kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """把召回的记忆写进 Context Items。
@@ -905,6 +960,49 @@ class MemFadePlugin(MaiBotPlugin):
             "item_schema_version": modified.get("item_schema_version"),
             "item": injected,
         }
+
+    @API("memfade_extract_check", description="自检：用一段示例对话跑一遍 LLM 抽取", version="1")
+    async def memfade_extract_check(self, conversation: str = "") -> Dict[str, Any]:
+        """验证「抽取 → 判重 → 落库」这条链路在运行中是否正常。"""
+
+        engine = self._engine
+        if engine is None:
+            return {"ok": False, "error": "引擎未就绪"}
+        sample = conversation or (
+            "用户：我叫许杏玖，以后叫我小许就行\n"
+            "机器人：好的，许杏玖，记住了\n"
+            "用户：我最喜欢吃辣的东西，不吃香菜\n"
+            "机器人：记住了"
+        )
+        messages = []
+        for line in sample.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("用户："):
+                messages.append({"role": "user", "content": line[3:].strip()})
+            elif line.startswith("机器人："):
+                messages.append({"role": "assistant", "content": line[4:].strip()})
+        try:
+            result = await engine.extractor.extract(messages, source="selfcheck")
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        return {
+            "ok": True,
+            "used_llm": result.used_llm,
+            "error": result.error,
+            "draft_count": len(result.drafts),
+            "drafts": [
+                {
+                    "content": d.content,
+                    "kind": d.kind.value,
+                    "importance": round(d.importance, 3),
+                    "cross_scope": d.cross_scope,
+                }
+                for d in result.drafts
+            ],
+        }
+
 
 def create_plugin() -> MemFadePlugin:
     """创建插件实例。"""

@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: 单元测试（Python ${{ matrix.python-version }}）
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 跑测试（标准库 unittest，无第三方依赖）
+        run: python -m unittest discover -s tests -t . -v
+
+  vendor-sync:
+    name: 适配器自带的核心副本与源目录一致
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 检查副本是否漂移
+        run: python -m unittest tests.test_vendored_sync -v
+
+  build:
+    name: 打包各宿主适配器
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 构建
+        run: python scripts/build_plugin.py --zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: memfade-plugins
+          path: dist/
+

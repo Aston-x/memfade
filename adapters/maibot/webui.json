@@ -29,6 +29,16 @@
               "max_length": 200
             }
           }
+        },
+        "extract_check": {
+          "api": "memfade_extract_check",
+          "version": "1",
+          "parameters": {
+            "conversation": {
+              "type": "string",
+              "max_length": 4000
+            }
+          }
         }
       },
       "content": [
@@ -135,6 +145,11 @@
           "type": "button",
           "label": "自检注入流程",
           "action": "selfcheck"
+        },
+        {
+          "type": "button",
+          "label": "自检 LLM 抽取",
+          "action": "extract_check"
         }
       ]
     },

@@ -324,7 +324,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
             MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
         items = make_items("今天吃什么呢")
-        result = await plugin.handle_replyer_before_model_request(
+        result = await plugin.handle_planner_before_request(
             items=items, session_id="sess-1", item_schema_version=1
         )
         new_items = result["modified_kwargs"]["items"]
@@ -334,6 +334,33 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
             "注入块应当排在真实用户消息之前",
         )
         self.assertEqual(new_items[1]["parts"][0]["text"], "今天吃什么呢")
+
+    async def test_replyer_injects_into_extra_prompt(self):
+        """回复器走 extra_prompt 通道——不用序列化 item，稳。"""
+
+        plugin = self.plugin
+        from memfade import MemoryDraft, MemoryKind, Scope
+
+        scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
+        plugin._engine.remember(
+            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+        )
+        result = await plugin.handle_replyer_before_request(
+            session_id="sess-1", reply_reason="今天吃什么呢", extra_prompt=""
+        )
+        self.assertIsNotNone(result)
+        prompt = result["modified_kwargs"]["extra_prompt"]
+        self.assertIn("许杏玖喜欢吃辣的东西", prompt)
+        self.assertIn("系统·", prompt)
+
+    async def test_replyer_keeps_existing_extra_prompt(self):
+        plugin = self.plugin
+        result = await plugin.handle_replyer_before_request(
+            session_id="sess-1", reply_reason="在吗", extra_prompt="用简短点的语气。"
+        )
+        if result is not None:
+            prompt = result["modified_kwargs"]["extra_prompt"]
+            self.assertTrue(prompt.startswith("用简短点的语气。"), "不能覆盖宿主原有的 extra_prompt")
 
     async def test_profile_and_memory_do_not_duplicate(self):
         """同一件事不能在画像块和记忆块里各出现一次。"""
