@@ -113,7 +113,10 @@ async def recall(event: Any, query: str = "") -> list:
 
 
 async def remember(event: Any, content: str, *, kind: str = "semantic", importance: float = 0.9) -> Optional[Any]:
-    """显式写入一条记忆。"""
+    """显式写入记忆（太长会按标点拆成「一件事一条」）。
+
+    返回写入的第一条；调用方想知道拆了几条的话，用 ``remember_all``。
+    """
 
     text = (content or "").strip()
     if not text:
@@ -124,8 +127,23 @@ async def remember(event: Any, content: str, *, kind: str = "semantic", importan
     except ValueError:
         memory_kind = MemoryKind.SEMANTIC
     draft = MemoryDraft(content=text, kind=memory_kind, importance=importance, source="nonebot")
-    # 按「一件事一条」写：太长的一段会拆成几条，
-    # 返回第一条（调用方只需要知道「记下了」）。
     written = engine.remember_atomic(draft, scope)
     return written[0] if written else None
+
+
+async def remember_all(
+    event: Any, content: str, *, kind: str = "semantic", importance: float = 0.9
+) -> list:
+    """显式写入记忆，返回写入的全部条目。"""
+
+    text = (content or "").strip()
+    if not text:
+        return []
+    scope = scope_of(event)
+    try:
+        memory_kind = MemoryKind(str(kind).lower())
+    except ValueError:
+        memory_kind = MemoryKind.SEMANTIC
+    draft = MemoryDraft(content=text, kind=memory_kind, importance=importance, source="nonebot")
+    return engine.remember_atomic(draft, scope)
 

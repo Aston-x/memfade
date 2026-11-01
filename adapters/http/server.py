@@ -35,7 +35,7 @@ import os
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if REPO_ROOT not in sys.path:
@@ -43,6 +43,7 @@ if REPO_ROOT not in sys.path:
 
 from memfade import MemFadeConfig, MemoryDraft, MemoryKind, Scope  # noqa: E402
 from memfade.engine import MemoryEngine  # noqa: E402
+from memfade.types import Memory  # noqa: E402
 
 
 def _scope_from(payload: Dict[str, Any]) -> Scope:
@@ -130,7 +131,12 @@ class MemFadeHTTPService:
                 )
         if not drafts:
             return {"ok": True, "written": 0, "ids": []}
-        written = self.engine.remember_many(drafts, scope)
+        # 用 remember_atomic：太长的一条会按标点拆成「一件事一条」。
+        # 侧车是给别的框架用的，写进来的东西多半没人再管——
+        # 一段 200 字塞进去，注入时只能截断。
+        written: List[Memory] = []
+        for draft in drafts:
+            written.extend(self.engine.remember_atomic(draft, scope))
         return {"ok": True, "written": len(written), "ids": [m.id for m in written]}
 
     def recall(self, payload: Dict[str, Any]) -> Dict[str, Any]:

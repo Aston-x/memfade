@@ -10,7 +10,7 @@ from nonebot.log import logger
 from nonebot.matcher import Matcher
 
 from .config import config
-from .core import _buffer, _counter, build_context, engine, remember, scope_of
+from .core import _buffer, _counter, build_context, engine, remember, remember_all, scope_of
 
 
 memory_observer = on_message(priority=99, block=False)
@@ -63,10 +63,15 @@ async def handle_remember(matcher: Matcher, event) -> None:
     content = str(matcher.get("content") or "").strip()
     if not content:
         await matcher.finish("要记住什么呢？用法：记住 <内容>")
-    memory = await remember(event, content)
-    if memory is None:
+    written = await remember_all(event, content)
+    if not written:
         await matcher.finish("没记下来（内容不重要或与已有记忆重复）")
-    await matcher.finish(f"记住了：{memory.content}")
+    if len(written) == 1:
+        await matcher.finish(f"记住了：{written[0].content}")
+    else:
+        await matcher.finish(
+            "记住了这 %d 件事：\n%s" % (len(written), "\n".join("- " + m.content for m in written))
+        )
 
 
 @forget_cmd.handle()

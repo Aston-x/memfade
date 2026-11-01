@@ -108,6 +108,36 @@ class TestHTTPSidecar(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertIn("scanned", result["report"])
 
+    def test_long_content_is_split(self):
+        """侧车写进来的长内容也要拆成「一件事一条」。
+
+        侧车是给别的框架用的——写进来的东西多半没人再管，
+        一段 200 字塞进去，注入时只能截断。
+        """
+
+        scope = {"platform": "qq", "chat_type": "private", "chat_id": "u1"}
+        long_text = (
+            "季怡在做小红书账号，发AI绘画内容，目标是靠流量和接单赚钱，"
+            "10月起零关注零粉丝，只有几个赞，曾被卖家临时加价拉黑二十块"
+        )
+        result = self._post(
+            "/remember", {"scope": scope, "content": long_text, "importance": 0.9}
+        )
+        self.assertGreater(result["written"], 1, "长内容应该被拆开")
+        for mid in result["ids"]:
+            mem = self.engine.store.get(mid)
+            self.assertLessEqual(len(mem.content), 40)
+
+    def test_recall_requires_match(self):
+        """显式检索必须真的命中。"""
+
+        scope = {"platform": "qq", "chat_type": "private", "chat_id": "u1"}
+        self._post("/remember", {"scope": scope, "content": "许杏玖喜欢辣的食物", "importance": 0.9})
+        result = self._post("/recall", {"scope": scope, "query": "完全不相关的东西xyz", "top_k": 8})
+        self.assertEqual(len(result["hits"]), 0)
+        result = self._post("/recall", {"scope": scope, "query": "辣", "top_k": 8})
+        self.assertEqual(len(result["hits"]), 1, "单字查询也要能查到")
+
 
 if __name__ == "__main__":
     unittest.main()
