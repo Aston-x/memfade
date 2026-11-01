@@ -171,6 +171,35 @@ class TestEngineKindThreshold(unittest.TestCase):
         self.assertIsNone(mem, "稳定事实门槛要保持高")
 
 
+class TestPromptTemplates(unittest.TestCase):
+    """提示词里的字面花括号会被 ``str.format`` 当成占位符。
+
+    这类错误只在**真正调用 LLM 时**才暴露，而且表现为
+    ``KeyError: '"content"'`` 之类看不懂的异常——
+    实机导入旧记忆时就是这么翻车的。
+    """
+
+    def test_all_prompts_are_formattable(self):
+        from memfade import extract
+
+        samples = {
+            "max_chars": 40,
+            "facts": "- 示例",
+            "conversation": "用户：你好",
+            "content": "一段原文",
+        }
+        for name in dir(extract):
+            if not name.isupper():
+                continue
+            value = getattr(extract, name)
+            if not isinstance(value, str):
+                continue
+            try:
+                value.format(**samples)
+            except (KeyError, IndexError, ValueError) as exc:
+                self.fail(f"{name} 不能被 format：{exc}")
+
+
 if __name__ == "__main__":
     unittest.main()
 

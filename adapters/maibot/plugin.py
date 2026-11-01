@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import time
@@ -1055,6 +1056,57 @@ class MemFadePlugin(MaiBotPlugin):
             table.append(row)
         return {"points": points, "table": table, "days": span}
 
+    @API("memfade_canonicalize", description="把零散事实规范化成「一件事一条」", version="1")
+    async def memfade_canonicalize(self, facts: Any = None) -> Dict[str, Any]:
+        """用宿主 LLM 规范化旧事实（迁移旧记忆时用）。
+
+        走宿主自己的 LLM 服务而不是裸 HTTP——某些模型（如 MiniMax）
+        默认开着 thinking，裸调用容易把 token 全烧在思考上、输出为空。
+
+        ``facts`` 收字符串或列表都行：WebUI 的声明式 action 只允许标量参数，
+        所以列表走 JSON 字符串传进来。
+        """
+
+        engine = self._engine
+        if engine is None:
+            return {"ok": False, "error": "引擎未就绪"}
+        if isinstance(facts, str):
+            try:
+                facts = json.loads(facts)
+            except json.JSONDecodeError:
+                facts = [facts]
+        items = [str(f).strip() for f in (facts or []) if str(f).strip()]
+        if not items:
+            return {"ok": True, "items": []}
+        try:
+            out = await self._canonicalize_chunked(engine, items)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "items": out}
+
+    async def _canonicalize_chunked(self, engine, items: List[str], depth: int = 0) -> List[Dict[str, Any]]:
+        """分批规范化；某批失败就**拆成两半再试**。
+
+        有些模型（比如开着 thinking 的 MiniMax）在长输入下会把 token
+        全烧在思考上、最后输出为空。拆小重来比直接放弃可靠得多。
+        """
+
+        out: List[Dict[str, Any]] = []
+        chunk_size = 10 if depth == 0 else 5
+        for start in range(0, len(items), chunk_size):
+            chunk = items[start : start + chunk_size]
+            try:
+                out.extend(await engine.extractor.canonicalize(chunk))
+            except Exception as exc:
+                if len(chunk) > 1 and depth < 3:
+                    mid = len(chunk) // 2
+                    out.extend(await self._canonicalize_chunked(engine, chunk[:mid], depth + 1))
+                    out.extend(await self._canonicalize_chunked(engine, chunk[mid:], depth + 1))
+                    continue
+                self.ctx.logger.warning("[memfade] 规范化这批失败：%s", exc)
+                for text in chunk:
+                    out.append({"content": text, "subject": "", "predicate": "", "object": ""})
+        return out
 
 def create_plugin() -> MemFadePlugin:
     """创建插件实例。"""

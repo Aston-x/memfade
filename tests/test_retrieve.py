@@ -99,6 +99,32 @@ class TestRetrieval(unittest.TestCase):
         self.assertIn(c.content, contents)
         self.assertLess(contents.index(b.content), contents.index(c.content) + 1)
 
+    def test_same_spo_is_same_fact_even_if_reworded(self):
+        """三元组相同 = 同一条事实，哪怕措辞不同。"""
+
+        a = MemoryDraft(
+            content="季怡已经开始玩《影之刃零》",
+            kind=MemoryKind.SEMANTIC,
+            importance=0.7,
+            subject="季怡",
+            predicate="玩",
+            object="影之刃零",
+        )
+        b = MemoryDraft(
+            content="季怡已经在玩《影之刃零》",
+            kind=MemoryKind.SEMANTIC,
+            importance=0.7,
+            subject="季怡",
+            predicate="玩",
+            object="影之刃零",
+        )
+        first = self.engine.remember(a, SCOPE)
+        second = self.engine.remember(b, SCOPE)
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        self.assertEqual(first.id, second.id, "同一三元组不该存成两条")
+        self.assertEqual(self.engine.store.count(SCOPE.key()), 1)
+
     def test_faded_memory_moves_to_echo_tier(self):
         draft = MemoryDraft(content="上周三去吃了炸鸡", kind=MemoryKind.EPISODIC, importance=0.3)
         draft.importance = 0.4

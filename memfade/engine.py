@@ -97,6 +97,11 @@ class MemoryEngine:
             existing = self.store.find_by_hash(normalized_hash(content), scope_key)
             if existing is not None:
                 return existing
+            same_spo = self.store.find_by_spo(
+                scope_key, draft.subject, draft.predicate, draft.object
+            )
+            if same_spo is not None:
+                return same_spo
             near = self._find_near_duplicate(content, scope_key)
             if near is not None:
                 return near
@@ -143,6 +148,15 @@ class MemoryEngine:
             if draft.importance < self._min_importance(draft.kind):
                 continue
             if self.store.find_by_hash(normalized_hash(content), scope_key) is not None:
+                continue
+            # 三元组相同 = 同一条事实（换措辞也认）。
+            # 文本相似度分不开「已经开始玩X」和「已经在玩X」，
+            # 但拆成 (谁,怎么样,什么) 就分得开了。
+            same_spo = self.store.find_by_spo(
+                scope_key, draft.subject, draft.predicate, draft.object
+            )
+            if same_spo is not None:
+                out.append(same_spo)
                 continue
             near = self._find_near_duplicate(content, scope_key)
             if near is not None:

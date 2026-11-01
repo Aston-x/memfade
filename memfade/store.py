@@ -362,6 +362,31 @@ class MemoryStore:
             ).fetchone()
         return _row_to_memory(row) if row else None
 
+    def find_by_spo(
+        self,
+        scope_key: str,
+        subject: str,
+        predicate: str,
+        object_value: str,
+    ) -> Optional[Memory]:
+        """按 (谁, 怎么样, 什么) 找同一条事实。
+
+        这是比文本相似度更硬的去重依据：
+        「季怡已经开始玩《影之刃零》」和「季怡已经在玩《影之刃零》」
+        文本 Dice 只有 0.706（够不着 0.82 的阈值），
+        但拆成三元组是同一个 (季怡, 玩, 影之刃零) → 是同一条。
+        """
+
+        if not (subject and predicate and object_value):
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM memories WHERE scope_key=? AND subject=? AND predicate=? AND object=? "
+                "ORDER BY id LIMIT 1",
+                (scope_key, subject, predicate, object_value),
+            ).fetchone()
+        return _row_to_memory(row) if row else None
+
     def iter_scope(
         self,
         scope_key: str,

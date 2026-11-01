@@ -59,8 +59,8 @@ EXTRACTION_SYSTEM_PROMPT = (
     "5. 绝不记录密码、密钥、身份证号、银行卡号、验证码等敏感信息。\n"
     "6. 不确定就不抽。宁可少抽，不要抽错。\n"
     "7. 输出格式示例："
-    '[{"content":"许杏玖喜欢辣的食物","kind":"semantic","importance":0.8,'
-    '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+    '[{{"content":"许杏玖喜欢辣的食物","kind":"semantic","importance":0.8,'
+    '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}}]'
 )
 
 
@@ -81,6 +81,26 @@ GIST_SYSTEM_PROMPT = (
 
 
 GIST_USER_TEMPLATE = "记忆原文：\n{content}\n\n压缩成一行摘要："
+
+
+CANONICALIZE_PROMPT = (
+    "把下面这些关于人的零散事实，规范化成「一件事一条」的列表。\n"
+    "\n"
+    "规则：\n"
+    "1. 一条只讲一件事，30 字以内；同一件事的多种说法合并成一条。\n"
+    "2. 给出 subject（谁）、predicate（怎么样）、object（什么）三段，必须填。\n"
+    "   predicate 只是一个**动宾短语**，6 字以内（如「住在」「喜欢」「参加」「称呼为」），\n"
+    "   不要把整句话塞进 predicate。\n"
+    "3. 说法不同但意思一样的，输出成同一条（内容取最完整的那版）。\n"
+    "4. 意思不同的（比如称呼一个是「宝宝」一个是「Master」），**分成两条**，不要合并。\n"
+    "5. 保留原文的人名，不要换成别的称呼。\n"
+    "\n"
+    "输出 JSON 数组，不要解释：\n"
+    '[{{"content":"...","subject":"...","predicate":"...","object":"..."}}]\n'
+    "\n"
+    "待规范化的事实：\n"
+    "{facts}"
+)
 
 
 @dataclass
@@ -147,13 +167,11 @@ class MemoryExtractor:
 
         if self.llm is not None:
             try:
-                raw = await self.llm.complete(
+                raw, drafts = await self._complete_with_retry(
                     EXTRACTION_USER_TEMPLATE.format(conversation=conversation),
                     system=EXTRACTION_SYSTEM_PROMPT,
-                    max_tokens=1200,
-                    temperature=0.1,
+                    max_tokens=4000,
                 )
-                drafts = self._parse(raw)
                 return ExtractionResult(drafts=drafts, raw=raw, used_llm=True)
             except Exception as exc:
                 fallback = self._rule_extract(conversation) if self.config.use_rules_fallback else []
@@ -186,6 +204,42 @@ class MemoryExtractor:
 
         return first_clause(text, max_chars)
 
+    async def canonicalize(self, facts: Sequence[str]) -> list[dict]:
+        """把零散事实规范化成「一件事一条 + 带三元组」。
+
+        供迁移旧记忆用：旧库里同一件事常有三四种说法，
+        先让模型合并成一条并给出 (谁,怎么样,什么)，
+        去重和矛盾检测才有抓手。
+        """
+
+        if not self.llm is None and not facts:
+            return []
+        if self.llm is None:
+            return [{"content": f, "subject": "", "predicate": "", "object": ""} for f in facts]
+        prompt = CANONICALIZE_PROMPT.format(facts="\n".join(f"- {f}" for f in facts))
+        raw, items = await self._complete_with_retry(prompt, max_tokens=8000)
+        payload = parse_json_block(raw)
+        items = payload if isinstance(payload, list) else ([payload] if payload else [])
+        out: list[dict] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            out.append(
+                {
+                    "content": content,
+                    "subject": str(item.get("subject") or "").strip(),
+                    "predicate": str(item.get("predicate") or "").strip(),
+                    "object": str(item.get("object") or "").strip(),
+                }
+            )
+        if not out:
+            # 模型没给出可解析的结果（可能被 max_tokens 截断）
+            raise RuntimeError("规范化失败：模型没有返回可解析的 JSON")
+        return out
+
     # ------------------------------------------------------------------ #
     # 内部实现
     # ------------------------------------------------------------------ #
@@ -206,6 +260,48 @@ class MemoryExtractor:
             else:
                 lines.append(f"{role or '对话'}：{content}")
         return "\n".join(lines)
+
+    async def _complete_with_retry(
+        self,
+        prompt: str,
+        *,
+        system: str = "",
+        max_tokens: int = 4000,
+        attempts: int = 3,
+    ) -> tuple:
+        """调用 LLM 并保证拿到可解析的结果。
+
+        为什么要重试：有些模型（MiniMax 这类默认开着 thinking 的）
+        会把 token 全烧在思考上，最后 finish_reason=length、输出为空。
+        宿主日志会打「达到最大 token 限制…无法生成完整内容」的警告，
+        但对插件来说就是「什么都没抽到」。
+        这里的做法是：**空输出就加大预算重来**，而不是默默记 0 条。
+        """
+
+        raw = ""
+        budget = max_tokens
+        last_error = ""
+        for _ in range(max(1, attempts)):
+            try:
+                raw = await self.llm.complete(
+                    prompt,
+                    system=system,
+                    max_tokens=budget,
+                    temperature=0.1,
+                )
+            except Exception as exc:
+                last_error = str(exc)
+                # 超时/网络错误：说明这次**太大**了，减小预算再来，
+                # 而不是加大（越大越容易超时）。
+                budget = max(1000, budget // 2)
+                continue
+            drafts = self._parse(raw)
+            if drafts:
+                return raw, drafts
+            # 输出为空：是被 max_tokens 截断了，加大预算重来
+            last_error = "模型没有返回可解析的结果"
+            budget *= 2
+        raise RuntimeError(f"抽取失败：{last_error or '模型无输出'}")
 
     def _parse(self, raw: str) -> list[MemoryDraft]:
         """解析 LLM 输出。脏数据一律丢弃，不猜。"""

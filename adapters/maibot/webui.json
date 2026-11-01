@@ -43,6 +43,16 @@
               "max_length": 4000
             }
           }
+        },
+        "canonicalize": {
+          "api": "memfade_canonicalize",
+          "version": "1",
+          "parameters": {
+            "facts": {
+              "type": "string",
+              "max_length": 20000
+            }
+          }
         }
       },
       "content": [
