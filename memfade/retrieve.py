@@ -352,6 +352,79 @@ class MemoryRetriever:
             remaining.remove(best)
         return ordered
 
+    def explain(
+        self,
+        query: str,
+        scope_key: str,
+        *,
+        now: Optional[float] = None,
+        top_k: int = 8,
+    ) -> list:
+        """解释「为什么召回了这些记忆」——拆开每个打分分量。
+
+        记忆系统最需要的就是这个：说不清为什么想起某件事，
+        用户就不会信任它，出问题也查不动。
+        """
+
+        ts = float(now if now is not None else time.time())
+        cfg = self.config.retrieval
+        text = (query or "").strip()
+        candidates = {}
+        if text:
+            for mid, score in self.store.search_fts(text, scope_key, limit=cfg.channel_candidates):
+                candidates.setdefault(mid, {})["bm25"] = score
+            for mid, score in self.store.recent(scope_key, limit=cfg.channel_candidates):
+                candidates.setdefault(mid, {})["recent"] = score
+
+        out = []
+        for mid, channels in candidates.items():
+            mem = self.store.get(mid)
+            if mem is None or mem.status in (MemoryStatus.ARCHIVED, MemoryStatus.SUPERSEDED):
+                continue
+            bm25 = channels.get("bm25")
+            relevance = bm25 if bm25 is not None else 0.0
+            eff = effective_strength(mem, ts, self.policy)
+            strength_term = cfg.strength_floor + (1.0 - cfg.strength_floor) * eff
+            evidence_at = mem.last_recalled_at or mem.created_at or mem.anchor_at
+            age_days = max(0.0, (ts - float(evidence_at)) / 86400.0)
+            recency = math.exp(-age_days / max(0.1, cfg.recency_tau_days))
+            freq = min(1.0, math.log1p(max(0, mem.recall_count)) / math.log(11.0))
+            parts = {
+                "relevance": round(relevance, 4),
+                "importance": round(mem.importance, 4),
+                "strength": round(strength_term, 4),
+                "recency": round(recency, 4),
+                "frequency": round(freq, 4),
+            }
+            score = (
+                cfg.w_relevance * relevance
+                + cfg.w_importance * mem.importance
+                + cfg.w_strength * strength_term
+                + cfg.w_recency * recency
+                + cfg.w_frequency * freq
+            )
+            out.append(
+                {
+                    "id": mem.id,
+                    "content": mem.content,
+                    "kind": mem.kind.value,
+                    "status": mem.status.value,
+                    "score": round(score, 4),
+                    "parts": parts,
+                    # 扁平一份，表格直接用（列名不允许带点）
+                    "relevance": parts["relevance"],
+                    "importance": parts["importance"],
+                    "strength": parts["strength"],
+                    "recency": parts["recency"],
+                    "frequency": parts["frequency"],
+                    "channels": sorted(channels.keys()),
+                    "age_days": round(age_days, 1),
+                    "recall_count": mem.recall_count,
+                }
+            )
+        out.sort(key=lambda item: item["score"], reverse=True)
+        return out[: max(1, top_k)]
+
     def _render_fact(self, hit: RetrievalHit) -> str:
         mem = hit.memory
         body = mem.content.strip()

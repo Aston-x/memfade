@@ -477,6 +477,18 @@ class MemoryStore:
                 ).fetchall()
         return {str(r[0]): int(r[1]) for r in rows}
 
+    def scope_counts(self) -> list:
+        """每个作用域的记忆条数，按条数降序。
+
+        管理界面用：默认展示记忆最多的那个会话。
+        """
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT scope_key, COUNT(*) n FROM memories GROUP BY scope_key ORDER BY n DESC"
+            ).fetchall()
+        return [(str(r[0]), int(r[1])) for r in rows]
+
     # ------------------------------------------------------------------ #
     # 检索通道
     # ------------------------------------------------------------------ #

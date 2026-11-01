@@ -222,6 +222,7 @@ class MemFadePlugin(MaiBotPlugin):
         self._maintain_ticks: int = 0
         """后台维护循环的心跳次数。用来确认循环真的在跑。"""
         self._last_search: List[Dict[str, Any]] = []
+        self._last_explain: List[Dict[str, Any]] = []
         self._recent_user_text: Dict[str, str] = {}
         """每个会话最近一条用户消息——回复器钩子拿不到 items，用它做检索词。"""
 
@@ -1184,6 +1185,43 @@ class MemFadePlugin(MaiBotPlugin):
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "items": out}
+
+    @API("memfade_why", description="解释「为什么召回了这些记忆」", version="1")
+    async def memfade_why(self, query: str = "", limit: int = 6, session_id: str = "") -> Dict[str, Any]:
+        """拆开每个打分分量，说明每条记忆为什么被召回。"""
+
+        engine = self._engine
+        if engine is None:
+            return {"ok": False, "error": "引擎未就绪"}
+        chat_id = session_id or self._busiest_scope_id(engine) or "explain"
+        scope = Scope(platform="qq", chat_type="session", chat_id=chat_id)
+        try:
+            rows = engine.explain(query, scope, top_k=max(1, min(20, int(limit))))
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        self._last_explain = rows
+        return {"ok": True, "scope": scope.key(), "results": rows}
+
+    @API("memfade_why_result", description="读取上一次「为什么召回」的结果", version="1")
+    async def memfade_why_result(self) -> Dict[str, Any]:
+        """面板表格的数据源。"""
+
+        return {"results": getattr(self, "_last_explain", [])}
+
+    def _busiest_scope_id(self, engine) -> str:
+        """找记忆最多的那个会话——面板默认看它。"""
+
+        best_key = ""
+        best_count = 0
+        try:
+            rows = engine.store.scope_counts()
+        except Exception:
+            return ""
+        for key, count in rows:
+            if count > best_count:
+                best_count = count
+                best_key = key
+        return best_key.split(":", 2)[-1] if best_key else ""
 
     async def _canonicalize_chunked(self, engine, items: List[str], depth: int = 0) -> List[Dict[str, Any]]:
         """分批规范化；某批失败就**拆成两半再试**。

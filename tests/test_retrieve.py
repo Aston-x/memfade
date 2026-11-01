@@ -286,3 +286,18 @@ class TestRetrieval(unittest.TestCase):
         )
         context = self.engine.build_context("她喜欢吃什么", SCOPE)
         self.assertIn("许杏玖喜欢吃辣的东西", context.text)
+
+    def test_explain_breaks_down_score(self):
+        """要能说清「为什么想起这条」。"""
+
+        self.engine.remember(
+            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
+        )
+        rows = self.engine.explain("许杏玖喜欢吃什么", SCOPE)
+        self.assertTrue(rows)
+        top = rows[0]
+        self.assertIn("relevance", top["parts"])
+        self.assertIn("importance", top["parts"])
+        self.assertIn("strength", top["parts"])
+        self.assertGreater(top["parts"]["relevance"], 0.0, "命中的记忆相关度应该大于 0")
+        self.assertIn("bm25", top["channels"])

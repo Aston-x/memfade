@@ -301,6 +301,18 @@ class MemoryEngine:
             scope.key(), now=now, max_items=max_items, max_chars=max_chars
         )
 
+    def explain(
+        self,
+        query: str,
+        scope: Scope,
+        *,
+        now: Optional[float] = None,
+        top_k: int = 8,
+    ) -> list:
+        """解释「为什么召回了这些记忆」。"""
+
+        return self.retriever.explain(query, scope.key(), now=now, top_k=top_k)
+
     def reinforce(self, memory_ids: Iterable[int], *, now: Optional[float] = None) -> int:
         """强化一批记忆。带冷却期，避免正反馈刷分。"""
 
