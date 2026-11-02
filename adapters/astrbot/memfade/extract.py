@@ -177,6 +177,18 @@ def _clamp_importance(kind: MemoryKind, value: float) -> float:
     return min(high, max(low, float(value)))
 
 
+def _is_rate_limited(exc: BaseException) -> bool:
+    """这个异常是不是「限流」？
+
+    限流（429 / RateLimitError / 「请求过于频繁」）不是「这次太大」，
+    重试只会继续撞墙、继续烧额度——该立刻退回规则抽取。
+    """
+
+    text = "%s %s" % (type(exc).__name__, exc)
+    markers = ("429", "ratelimit", "rate_limit", "too many requests", "请求过于频繁")
+    return any(marker in text.lower() for marker in markers)
+
+
 class MemoryExtractor:
     """把对话变成候选记忆。"""
 
@@ -311,6 +323,10 @@ class MemoryExtractor:
         宿主日志会打「达到最大 token 限制…无法生成完整内容」的警告，
         但对插件来说就是「什么都没抽到」。
         这里的做法是：**空输出就加大预算重来**，而不是默默记 0 条。
+
+        ⚠ **限流（429）不重试**：限流不是「这次太大」，重试只会
+        继续撞墙、继续烧额度，而且把退路（规则抽取）拖慢了。
+        撞上就立刻退回规则抽取。
         """
 
         raw = ""
@@ -326,6 +342,8 @@ class MemoryExtractor:
                 )
             except Exception as exc:
                 last_error = str(exc)
+                if _is_rate_limited(exc):
+                    raise RuntimeError(f"抽取失败（模型限流）：{last_error}") from exc
                 # 超时/网络错误：说明这次**太大**了，减小预算再来，
                 # 而不是加大（越大越容易超时）。
                 budget = max(1000, budget // 2)
@@ -407,10 +425,14 @@ class MemoryExtractor:
     _RULES: tuple[tuple[str, MemoryKind, float, bool], ...] = (
         (r"(?:记住|记一下|永远记住|别忘了)[：:，, ]*(.+)", MemoryKind.SEMANTIC, 0.95, True),
         (r"(?:我|他|她)(?:叫|的名字是|名字叫)\s*([^\s，。！？,.!?]{1,12})", MemoryKind.SEMANTIC, 0.9, False),
-        (r"(?:我|他|她)(?:最喜欢|超爱|最喜欢的是)\s*([^，。！？,.!?]{1,24})", MemoryKind.PREFERENCE, 0.8, False),
-        (r"(?:我|他|她)(?:最讨厌|受不了|根本不吃|不喜欢)\s*([^，。！？,.!?]{1,24})", MemoryKind.PREFERENCE, 0.78, False),
+        (r"(?:我|他|她)(?:最喜欢|超喜欢|超爱)\s*([^，。！？,.!?]{1,24})", MemoryKind.PREFERENCE, 0.8, False),
+        # 光说「我喜欢X」的写法在中文里最常见，早先的规则只认「最喜欢」，
+        # 于是模型一限流（429）就只剩下「不叫/不讨厌」那几条能抽到。
+        # 「我最喜欢X」不会被下面这条重复命中（「喜欢」前面是「最」，对不上）。
+        (r"(?:我|他|她)喜欢\s*([^，。！？,.!?]{1,24})", MemoryKind.PREFERENCE, 0.75, False),
+        (r"(?:我|他|她)(?:最讨厌|受不了|根本不吃|不喜欢|讨厌|不吃)\s*([^，。！？,.!?]{1,24})", MemoryKind.PREFERENCE, 0.75, False),
         (r"(?:我|他|她)(?:住在|家在)\s*([^，。！？,.!?]{1,24})", MemoryKind.SEMANTIC, 0.72, False),
-        (r"(?:我|他|她)(?:是做|工作是|职业是)\s*([^，。！？,.!?]{1,24})", MemoryKind.SEMANTIC, 0.72, False),
+        (r"(?:我|他|她)(?:的)?(?:是做|工作是|职业是)\s*([^，。！？,.!?]{1,24})", MemoryKind.SEMANTIC, 0.72, False),
         (r"(?:约好|说好|约定|答应)\s*([^。！？.!?]{1,32})", MemoryKind.EPISODIC, 0.68, False),
     )
 
@@ -426,7 +448,11 @@ class MemoryExtractor:
                 tail = match.group(1).strip()
                 if not tail:
                     continue
-                content = (tail if kind is MemoryKind.SEMANTIC else match.group(0)).strip()
+                # 整句留着（「我住在上海」比「上海」完整），
+                # 只有「记住：xxx」这种前缀是噪音，要去掉。
+                content = match.group(0).strip()
+                if content.startswith(("记住", "记一下", "永远记住", "别忘了")):
+                    content = tail
                 if len(content) < 2 or len(content) > 120:
                     continue
                 key = normalized_hash(content)

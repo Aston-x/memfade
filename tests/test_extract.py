@@ -55,6 +55,26 @@ class TestRuleExtraction(unittest.IsolatedAsyncioTestCase):
 
 
 class TestLLMExtraction(unittest.IsolatedAsyncioTestCase):
+    async def test_rate_limit_falls_back_to_rules_without_retrying(self):
+        """限流不是「这次太大」——重试只会继续撞墙、继续烧额度。"""
+
+        class _RateLimitedLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def complete(self, prompt, **kwargs):
+                self.calls += 1
+                raise RuntimeError("Error code: 429 - 请求过于频繁，请稍后再试")
+
+        llm = _RateLimitedLLM()
+        extractor = MemoryExtractor(llm=llm)
+        result = await extractor.extract(
+            [{"role": "user", "content": "我喜欢吃辣的东西，不吃香菜"}]
+        )
+        self.assertFalse(result.used_llm, "限流后应走规则抽取")
+        self.assertTrue(result.drafts, "规则抽取应该还能抽到东西")
+        self.assertEqual(llm.calls, 1, "限流时不该重试")
+
     async def test_parses_json(self):
         reply = (
             '[{"content":"许杏玖喜欢辣的食物","kind":"semantic","importance":0.8,'
