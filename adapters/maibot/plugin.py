@@ -1042,7 +1042,10 @@ class MemFadePlugin(MaiBotPlugin):
         if engine is None:
             self._last_search = []
             return {"count": 0}
-        scope = Scope(platform="qq", chat_type="session", chat_id="webui")
+        # ⚠ 别用固定的 "webui" 作用域：那儿一条记忆都没有，
+        # 面板的检索框永远搜不出东西。默认看记忆最多的那个会话。
+        chat_id = self._busiest_scope_id(engine) or "webui"
+        scope = Scope(platform="qq", chat_type="session", chat_id=chat_id)
         vector = await engine.embed_query(query) if query else None
         hits = engine.recall(
             query,

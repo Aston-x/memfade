@@ -58,6 +58,48 @@ class TestWebUIDeclaration(unittest.TestCase):
         self.assertIsNotNone(extension, "宿主没读到 webui.json")
         self.assertEqual(len(extension.pages), 2)
 
+    def test_actions_declare_their_parameters(self):
+        """动作必须声明参数，否则宿主直接 422。
+
+        宿主校验入参时会检查「有没有未声明的参数」——
+        面板的检索框把关键词传给动作，动作没声明 query，
+        点一下就是 422「未声明的参数: query」。检索框直接是废的。
+        """
+
+        import json
+
+        with open(REPO_ROOT / "adapters" / "maibot" / "webui.json", encoding="utf-8") as fh:
+            data = json.load(fh)
+        pages = {page["id"]: page for page in data.get("pages", [])}
+        search = pages["memfade_search"]["actions"]["search"]
+        self.assertIn("query", search.get("parameters") or {})
+        self.assertIn("limit", search.get("parameters") or {})
+
+    def test_search_action_covers_its_inputs(self):
+        """页面上的输入框，至少得有一个动作声明得出来。
+
+        面板把输入框的值传给被点的那个动作；
+        动作没声明 → 宿主报 422「未声明的参数」。
+        """
+
+        import json
+
+        with open(REPO_ROOT / "adapters" / "maibot" / "webui.json", encoding="utf-8") as fh:
+            data = json.load(fh)
+        for page in data.get("pages", []):
+            actions = page.get("actions") or {}
+            declared = set()
+            for action in actions.values():
+                declared |= set((action.get("parameters") or {}).keys())
+            for block in page.get("content") or []:
+                if block.get("type") != "input":
+                    continue
+                field = block.get("name")
+                if field and field not in declared:
+                    self.fail(
+                        "页面 %s 的输入框 %s 没有任何动作声明它" % (page.get("id"), field)
+                    )
+
 
 @unittest.skipUnless(HAS_HOST, "未找到 MaiBot 宿主")
 class TestToolVisibility(unittest.TestCase):
