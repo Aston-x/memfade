@@ -450,6 +450,24 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         after = engine.store.get(before.id)
         self.assertTrue(after.pinned, "置顶命令没生效")
 
+    async def test_memory_command_shows_what_is_stored(self):
+        """「/记忆」不能只给数字——主人得能一眼看出库里存了什么。
+
+        「记忆库被污染了」这种问题，只有看得见才发现得了。
+        """
+
+        plugin = self.plugin
+        plugin._ctx.llm.reply = (
+            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+        )
+        await plugin.handle_after_process(message=make_message("我喜欢辣的"))
+        await plugin._drain_extractions()
+        await plugin.cmd_memory(stream_id="sess-1", matched_groups={})
+        sent = " ".join(text for text, _ in plugin._ctx.send.sent)
+        self.assertIn("记住了", sent)
+        self.assertIn("季怡喜欢辣的食物", sent, "「/记忆」没有把记下的内容列出来")
+
     async def test_extraction_does_not_block_the_reply(self):
         """抽取要等 LLM（实机 30~60 秒），不能挡住主人的回复。
 

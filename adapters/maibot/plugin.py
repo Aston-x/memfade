@@ -1115,6 +1115,23 @@ class MemFadePlugin(MaiBotPlugin):
             ),
             stream_id,
         )
+        # 光给数字不够：**主人得能一眼看出库里存了什么**。
+        # 「记忆库被污染了」这种问题，只有看得见才发现得了。
+        try:
+            ids = [mid for mid, _ in engine.store.recent(scope.key(), limit=8)]
+            recent = sorted(
+                engine.store.get_many(ids),
+                key=lambda m: m.created_at,
+                reverse=True,
+            )
+        except Exception:
+            recent = []
+        if recent:
+            lines = ["最近记下的："]
+            for mem in recent:
+                marker = "（已淡出）" if mem.status.value != "active" else ""
+                lines.append(f"· {mem.content}{marker}")
+            await self.ctx.send.text("\n".join(lines), stream_id)
         return True, "已返回记忆统计", 0
 
     @Command(
