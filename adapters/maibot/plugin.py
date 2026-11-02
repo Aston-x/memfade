@@ -213,6 +213,13 @@ class MemFadePlugin(MaiBotPlugin):
         self._buffer_at: Dict[str, float] = {}
         """每个会话最后一次收到消息的时间，用来判断「安静下来了」。"""
 
+        self._buffer_path = ""
+        """待抽取消息的落盘位置。
+
+        缓冲只在内存里的话，宿主一重启（改配置、崩溃、更新），
+        攒到一半还没抽的记忆就**丢了**——记忆插件最不该有的失败。
+        """
+
         self._scopes: set[str] = set()
         """见过的会话键，后台整理任务要遍历。"""
 
@@ -234,11 +241,13 @@ class MemFadePlugin(MaiBotPlugin):
         """插件加载：建引擎、起整理任务。"""
 
         self._rebuild_engine()
+        self._load_buffer()
         self._maintain_task = asyncio.create_task(self._maintenance_loop())
 
     async def on_unload(self) -> None:
         """插件卸载：收尾。"""
 
+        self._save_buffer()
         if self._maintain_task is not None:
             self._maintain_task.cancel()
             try:
@@ -324,6 +333,71 @@ class MemFadePlugin(MaiBotPlugin):
         except Exception as exc:  # pragma: no cover - 读库失败不该挡住加载
             self.ctx.logger.warning("[memfade] 读取已有会话失败: %s", exc)
         self.ctx.logger.info("[memfade] 引擎就绪：%s", db_path)
+
+    # ------------------------------------------------------------------ #
+    # 待抽取消息的落盘
+    # ------------------------------------------------------------------ #
+
+    def _buffer_file(self) -> str:
+        """缓冲文件路径。"""
+
+        if not self._buffer_path:
+            try:
+                data_dir = self.ctx.paths.data_dir
+                data_dir.mkdir(parents=True, exist_ok=True)
+                self._buffer_path = str(data_dir / "memfade_pending.json")
+            except Exception:  # pragma: no cover - 没有可写目录就退回内存
+                self._buffer_path = ""
+        return self._buffer_path
+
+    def _save_buffer(self) -> None:
+        """把待抽取的消息写盘。"""
+
+        path = self._buffer_file()
+        if not path:
+            return
+        payload = {
+            "buffer": {k: list(v) for k, v in self._buffer.items() if v},
+            "at": {k: float(v) for k, v in self._buffer_at.items() if v},
+            "saved_at": time.time(),
+        }
+        try:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=False)
+            os.replace(tmp, path)
+        except Exception as exc:  # pragma: no cover - 写盘失败不该影响聊天
+            self.ctx.logger.warning("[memfade] 待抽取消息落盘失败: %s", exc)
+
+    def _load_buffer(self) -> None:
+        """把上次没抽完的消息读回来。"""
+
+        path = self._buffer_file()
+        if not path or not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except Exception as exc:
+            self.ctx.logger.warning("[memfade] 待抽取消息读取失败: %s", exc)
+            return
+        buffer = payload.get("buffer") or {}
+        at = payload.get("at") or {}
+        if not isinstance(buffer, dict):
+            return
+        restored = 0
+        for key, items in buffer.items():
+            if not isinstance(items, list) or not items:
+                continue
+            self._buffer[str(key)] = [m for m in items if isinstance(m, dict)]
+            self._buffer_at[str(key)] = float(at.get(key, 0.0) or 0.0)
+            restored += len(self._buffer[str(key)])
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        if restored:
+            self.ctx.logger.info("[memfade] 恢复上次未抽取的消息 %d 条", restored)
 
     # ------------------------------------------------------------------ #
     # 会话解析
@@ -680,6 +754,7 @@ class MemFadePlugin(MaiBotPlugin):
         buffer = self._buffer.setdefault(key, [])
         buffer.append({"role": "user", "content": parsed.get("text") or ""})
         self._buffer_at[key] = time.time()
+        self._save_buffer()
         count = self._counter.get(key, 0) + 1
         self._counter[key] = count
         every = max(1, int(self.config.memory.extract_every_n))
@@ -688,6 +763,7 @@ class MemFadePlugin(MaiBotPlugin):
             return
         pending = list(buffer)
         buffer.clear()
+        self._save_buffer()
         try:
             meta = {
                 "group_id": parsed.get("group_id") or "",
@@ -701,6 +777,7 @@ class MemFadePlugin(MaiBotPlugin):
             self.ctx.logger.warning("[memfade] 抽取记忆失败: %s", exc)
             # 抽取失败不丢内容，放回缓冲区下次一起试
             buffer.extend(pending)
+            self._save_buffer()
 
     async def _flush_idle_buffers(self) -> None:
         """把「安静下来」的会话攒下的消息抽成记忆。
@@ -739,6 +816,7 @@ class MemFadePlugin(MaiBotPlugin):
                 self.ctx.logger.warning("[memfade] 空闲冲刷失败: %s", exc)
                 self._buffer[key] = pending
                 self._buffer_at[key] = now
+        self._save_buffer()
 
     async def _maybe_maintain(self, scope: Scope) -> None:
         """整理单个会话（带节流）。后台循环用的是 _maintain_all_scopes。"""

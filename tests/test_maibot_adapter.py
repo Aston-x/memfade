@@ -444,6 +444,40 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         after = engine.store.get(before.id)
         self.assertTrue(after.pinned, "置顶命令没生效")
 
+    async def test_pending_messages_survive_restart(self):
+        """宿主重启不能把攒到一半还没抽的记忆丢掉。
+
+        缓冲只在内存里的话，改个配置重启一下，
+        用户刚说的那几句话就永远不会被记住了——
+        记忆插件最不该有的失败。
+        """
+
+        from adapters.maibot.plugin import MemFadePlugin, MemFadePluginConfig
+
+        plugin = self.plugin
+        # 让消息先攒着（默认配置是每条就抽）
+        plugin._plugin_config_instance.memory.extract_every_n = 3
+        plugin._ctx.llm.reply = "[]"
+        await plugin.handle_after_process(message=make_message("我喜欢吃辣"))
+        await plugin.handle_after_process(message=make_message("我住在上海"))
+        self.assertTrue(any(plugin._buffer.values()), "缓冲里应该有消息")
+
+        # 模拟重启：新建一个插件实例，读同一个数据目录
+        fresh = MemFadePlugin()
+        fresh._ctx = FakeCtx(Path(self.tmp), "[]")
+        config = MemFadePluginConfig()
+        config.plugin.enabled = True
+        config.memory.extract_every_n = 3
+        config.memory.extract_min_messages = 2
+        config.memory.use_host_embedding = True
+        fresh._plugin_config_instance = config
+        await fresh.on_load()
+        try:
+            restored = sum(len(v) for v in fresh._buffer.values())
+            self.assertEqual(restored, 2, "重启后待抽取的消息没恢复")
+        finally:
+            await fresh.on_unload()
+
     async def test_scope_parsing_private(self):
         from adapters.maibot.plugin import MemFadePlugin
 
