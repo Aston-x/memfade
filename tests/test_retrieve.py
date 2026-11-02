@@ -216,7 +216,9 @@ class TestRetrieval(unittest.TestCase):
         c = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8)
         for draft in (a, b, c):
             self.engine.remember(draft, SCOPE)
-        context = self.engine.build_context("蓝桥杯报名", SCOPE)
+        # 显式要宽松模式：第三条（不同话题）跟查询词面不搭，
+        # 靠「最近写入」通道进来——这样才有第三条可供 MMR 交错。
+        context = self.engine.build_context("蓝桥杯报名", SCOPE, require_match=False)
         contents = [hit.memory.content for hit in context.facts]
         self.assertEqual(len(contents), 3)
         # 前两条讲同一件事，应该被第三条（不同话题）插到中间或后面
@@ -264,7 +266,10 @@ class TestRetrieval(unittest.TestCase):
     def test_context_separates_tiers(self):
         fact = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
         self.engine.remember(fact, SCOPE)
-        ctx = self.engine.build_context("吃什么", SCOPE)
+        # 查询要**词面搭得上**：这条测的是「事实层与回声层怎么分层」，
+        # 不是「能不能跨词面找到近义记忆」——后者要么有向量通道，
+        # 要么显式要宽松模式（见 test_lenient_without_embeddings）。
+        ctx = self.engine.build_context("辣的食物", SCOPE)
         self.assertIn("许杏玖喜欢辣的食物", ctx.text)
         self.assertIn("[记忆]", ctx.text)
 
@@ -423,6 +428,36 @@ class TestRetrieval(unittest.TestCase):
         # require_match=True：模拟「有向量能力」时的严格模式
         context = self.engine.build_context("她喜欢吃什么", SCOPE, require_match=True)
         self.assertEqual(context.text, "", "没有检索命中时不该注入无关记忆")
+
+    def test_referential_query_rescues_the_just_discussed_memory(self):
+        """「那部番叫什么」这种指代，词面一个都搭不上，答案却是刚刚聊过的那条。"""
+
+        self.engine.remember(
+            MemoryDraft(content="季怡追完《Re:从零开始的异世界生活》第四季", importance=0.8),
+            SCOPE,
+        )
+        context = self.engine.build_context("那部番叫什么", SCOPE)
+        self.assertIn("Re:从零开始的异世界生活", context.text, "指代问句该救回刚聊过的那条")
+
+    def test_rescue_is_bounded_to_one_memory(self):
+        """兜底只能救**一条**——放多了就是「总提旧事」。"""
+
+        for index in range(4):
+            self.engine.remember(
+                MemoryDraft(content=f"刚聊过的事情编号{index}关于蓝色物体", importance=0.6),
+                SCOPE,
+            )
+        context = self.engine.build_context("那个东西怎么说", SCOPE)
+        self.assertLessEqual(len(context.facts), 1, "兜底放进来太多条")
+
+    def test_rescue_ignores_plain_questions(self):
+        """普通问句不是指代——「她喜欢吃什么」里全是常用字，不能当成指代。"""
+
+        self.engine.remember(
+            MemoryDraft(content="蓝桥杯报名截止到12月18号", importance=0.9), SCOPE
+        )
+        context = self.engine.build_context("她喜欢吃什么", SCOPE)
+        self.assertEqual(context.text, "", "普通问句不该触发兜底")
 
     def test_lenient_without_embeddings(self):
         """没有向量能力时不要求词面命中——近义记忆会被误杀。"""

@@ -168,8 +168,48 @@ class MemoryRetriever:
             # ⚠ 必须在 **top_k 截断之前**过滤：
             # 否则「最近写入但跟问题无关」的候选会占掉额度，
             # 真正命中的记忆反而被挤出去。
-            scored = [h for h in scored if h.relevance >= cfg.min_relevance]
+            kept = [h for h in scored if h.relevance >= cfg.min_relevance]
+            rescued = self._rescue_recent(kept, scored, text, cfg)
+            scored = kept + rescued
         return scored[:limit]
+
+    def _rescue_recent(
+        self,
+        kept: list[RetrievalHit],
+        scored: list[RetrievalHit],
+        query: str,
+        cfg: Any,
+    ) -> list[RetrievalHit]:
+        """「刚聊完的那件事」——词面搭不上时的兜底。
+
+        为什么要它：中文聊天里「那部番叫什么」「他后来呢」这种**指代**
+        满地都是，靠词面检索一个都命中不了；但答案往往就是**刚刚聊过的那条**。
+
+        为什么要限死：
+        「最近写入」通道是**无条件**参与候选的，没有这道闸门，
+        每一轮都会把最近的几条塞进上下文——那就是「总提旧事」。
+        所以只在**查询明显在指代**时才放一条进来，而且只放一条。
+        """
+
+        if not cfg.recent_rescue:
+            return []
+        if not query:
+            return []
+        if not any(marker in query for marker in _REFERENTIAL_MARKERS):
+            return []
+        for hit in scored:
+            if hit in kept:
+                continue
+            # 只救「靠最近写入通道进来」的（相关度为 0），
+            # 而且要真的是最近的那条。
+            if hit.relevance > 0:
+                continue
+            # 「刚聊完」是有时限的：几小时前的事不算「刚才」。
+            age_hours = (time.time() - float(hit.memory.created_at or 0)) / 3600.0
+            if age_hours > float(cfg.recent_rescue_window_hours):
+                continue
+            return [hit]
+        return []
 
     def _revive_archived(
         self,
@@ -625,6 +665,34 @@ _PROFILE_KIND_WEIGHT = {
     MemoryKind.SKILL: 1.10,
     MemoryKind.SEMANTIC: 1.00,
 }
+
+
+_REFERENTIAL_MARKERS = (
+    "那个",
+    "这个",
+    "那部",
+    "这部",
+    "那件",
+    "这件",
+    "刚才",
+    "刚刚",
+    "上次",
+    "还记得",
+    "想起来",
+    "后来",
+    "然后呢",
+)
+"""指代词——查询里有这些，才可能是在问「刚聊过的那件事」。
+
+为什么要有这张表：「最近写入」通道是**无条件**参与候选的，
+没有这道闸门，每一轮都会把最近几条塞进上下文——那就是「总提旧事」。
+但中文里「那部番叫什么」这种指代满地都是，
+词面检索一个都命中不了，答案往往就是刚刚聊过的那条。
+所以：**只在明显在指代时，放一条进来，而且只放一条。**
+
+⚠ **不放「他/她/它」**：这些字在中文里几乎每句都有
+（「她喜欢吃什么」也会命中），放进来等于没有闸门。
+"""
 """画像里各类记忆的权重。
 
 画像是「这个人是谁」：喜好、关系、做法比泛泛的事实更该常驻。

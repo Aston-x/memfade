@@ -50,6 +50,7 @@ OPERATOR_TOOLS = (
     "clean_library.py",
     "audit_db.py",
     "verify_against_chat.py",
+    "acceptance.py",
 )
 
 

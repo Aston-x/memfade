@@ -346,7 +346,13 @@ class MemoryEngine:
         """召回记忆（不强化）。"""
 
         if require_match is None:
-            require_match = self._embed_one is not None
+            # ⚠ 默认**总是**要求「检索真的命中」。
+            # 以前这里是「有向量能力才要求」——于是没配嵌入服务的部署
+            # 完全没有相关度闸门，每一轮都把最近几条塞进上下文
+            # （就是「总提旧事」）。
+            # 「刚聊完的那件事」由 retrieve._rescue_recent 兜底：
+            # 只在查询明显在指代时，放**一条**进来。
+            require_match = True
         if query_vector is None and self._embed_one is not None:
             # 调用方没给向量就自己算一份，省得每条检索路径都得记得传。
             # _embed_sync 在有事件循环时返回 None（不阻塞事件循环），
@@ -378,9 +384,8 @@ class MemoryEngine:
         """召回 + 分层 + 预算裁剪 + 强化。适配器的常用入口。"""
 
         if require_match is None:
-            # 有向量能力时才要求「检索真的命中」——
-            # 否则词面不重叠的近义记忆会被误杀。
-            require_match = self._embed_one is not None
+            # 与 recall 同一口径：默认总是要求真命中。
+            require_match = True
         hits = self.recall(
             query,
             scope,
@@ -430,7 +435,9 @@ class MemoryEngine:
         """
 
         if require_match is None:
-            require_match = self._embed_one is not None
+            # 与 recall 同一口径：默认总是要求真命中，
+            # 否则面板解释的召回结果和机器人实际注入的会对不上。
+            require_match = True
         if query_vector is None and self._embed_one is not None:
             query_vector = self._embed_sync(query)
         return self.retriever.explain(
