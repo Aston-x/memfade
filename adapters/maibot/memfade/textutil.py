@@ -186,36 +186,21 @@ def truncate(text: str, limit: int, ellipsis: str = "…") -> str:
     return key[: max(0, limit - len(ellipsis))] + ellipsis
 
 
-_FILLER_PREFIXES = (
-    "但是",
-    "不过",
-    "而且",
-    "然后",
-    "后来",
-    "另外",
-    "所以",
-    "因此",
-    "因为",
-    "由于",
-    "顺便",
-    "接着",
-    "之后",
-    "当时",
-    "这次",
-    "那次",
-)
 
 
 def best_clause(text: str, limit: int = 40) -> str:
-    """挑出最有信息量的一个分句。
+    """取一句话作为 gist（内容本来就短就整段留）。
 
-    为什么不能只取第一句：记忆淡化成 gist 之后，这一行就是它剩下的全部。
-    而第一句有时是铺垫——「后来他跟朋友去吃了炸鸡」里真正有信息的是
-    「他跟朋友去吃了炸鸡」，取第一句就丢了「跟朋友」这个关键信息。
+    为什么是第一句：gist 的作用是「一件事一行」，
+    而**第一句通常就是那件事**（后面的是补充、后续、别的事）。
 
-    但也不能一律换掉：第一句通常带主语（「许杏玖喜欢辣的食物」），
-    换掉就丢了主语。所以规则是——
-    **第一句不是铺垫就用它；是铺垫才从后面挑一句有实词的。**
+    早先试过「挑最有信息量的一句」（按内容词数量打分），结果更糟：
+    「后来他跟朋友去吃了炸鸡，许杏玖很开心，然后又去买了点东西…」
+    会挑到最后那句——正好把「发生了什么」挑没了。
+    第一句简单、可预测、留着话题。
+
+    ⚠ 分句点不含「冒号后面跟数字」的情况：「10月16日19:00的直播」
+    不能被劈成「10月16日19」。
     """
 
     key = normalize_light(text)
@@ -225,35 +210,39 @@ def best_clause(text: str, limit: int = 40) -> str:
         # 本来就够短，压它只会丢信息（gist 的作用是「细节已不可考」，
         # 可它本来就没细节）。
         return key
-    clauses = [c.strip() for c in re.split(r"[，,。；;：:、！？!?\n]", key) if c.strip()]
+    clauses = _split_clauses(key)
     if not clauses:
         return truncate(key, limit)
     head = clauses[0]
-    if not _is_filler(head):
-        return truncate(head, limit)
-    rest = clauses[1:]
-    if not rest:
-        return truncate(head, limit)
-    return truncate(max(rest, key=_clause_score), limit)
+    if len(head) < 6 and len(clauses) > 1:
+        # 第一句太短（「嗯，」），多半是引子，取下一句。
+        head = clauses[1]
+    return truncate(head, limit)
 
 
-def _clause_score(clause: str) -> float:
-    """给一个分句打「信息量」分。"""
+def _split_clauses(text: str) -> list[str]:
+    """按标点切句。冒号后面跟数字的不算断点（时间、URL）。"""
 
-    score = float(len(clause))
-    # 实词越多越可能是「有内容」的那一句
-    score += 2.0 * len(content_words(clause, limit=16))
-    return score
+    out: list[str] = []
+    buf: list[str] = []
+    for index, ch in enumerate(text):
+        nxt = text[index + 1] if index + 1 < len(text) else ""
+        if ch == ":" and nxt.isdigit():
+            buf.append(ch)
+            continue
+        if ch in "，,。；;：:、！？!?\n":
+            piece = "".join(buf).strip()
+            if piece:
+                out.append(piece)
+            buf = []
+            continue
+        buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        out.append(tail)
+    return out
 
 
-def _is_filler(clause: str) -> bool:
-    """这个分句是不是「铺垫」。"""
-
-    for filler in _FILLER_PREFIXES:
-        if clause.startswith(filler):
-            return True
-    # 一个实词都没有，多半也是铺垫
-    return not content_words(clause, limit=4)
 
 
 _STOPWORDS = frozenset(

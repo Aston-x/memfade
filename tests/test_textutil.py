@@ -94,8 +94,8 @@ class TestBestClause(unittest.TestCase):
             "许杏玖喜欢辣的食物",
         )
 
-    def test_skips_filler_clause(self):
-        """「后来……」是铺垫，该挑后面有内容的一句。"""
+    def test_takes_first_clause_of_long_text(self):
+        """长内容取第一句——它通常就是那件事。"""
 
         self.assertEqual(
             best_clause(
@@ -103,7 +103,7 @@ class TestBestClause(unittest.TestCase):
                 "然后又去买了点东西回来做饭吃，"
                 "路上还跟他说起下周要一起去的地方"
             ),
-            "许杏玖很开心",
+            "后来他跟朋友去吃了炸鸡",
         )
 
     def test_keeps_short_text_whole(self):
@@ -111,6 +111,16 @@ class TestBestClause(unittest.TestCase):
 
         text = "10月起零关注零粉丝、只有几个赞，曾被卖家临时加价拉黑二十块"
         self.assertEqual(best_clause(text, 40), text)
+
+    def test_time_is_not_split_at_colon(self):
+        """「10月16日19:00的直播」不能被劈成「10月16日19」。"""
+
+        text = (
+            "10月16日19:00大纲解析直播（已错过），"
+            "另外还有几场别的直播也错过了，"
+            "蓝桥杯那边的直播说是下个月才开"
+        )
+        self.assertEqual(best_clause(text, 40), "10月16日19:00大纲解析直播（已错过）")
 
 
 class TestCjkUnigrams(unittest.TestCase):
