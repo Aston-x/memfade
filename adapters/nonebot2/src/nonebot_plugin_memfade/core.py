@@ -95,7 +95,12 @@ async def build_context(event: Any, query: str = "") -> str:
     if not text:
         return ""
     scope = scope_of(event)
-    memory_ctx = engine.build_context(text, scope, top_k=config.memfade_top_k)
+    # 向量要在这里 await：引擎内部的同步取向量在事件循环里会直接放弃
+    # （不阻塞事件循环），异步路径必须自己算。
+    vector = await engine.embed_query(text)
+    memory_ctx = engine.build_context(
+        text, scope, top_k=config.memfade_top_k, query_vector=vector
+    )
     if not memory_ctx.text:
         return ""
     return (

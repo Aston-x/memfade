@@ -333,10 +333,26 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1", help="监听地址")
     parser.add_argument("--port", type=int, default=8787, help="监听端口")
     parser.add_argument("--token", default="", help="鉴权令牌（X-MemFade-Token）")
+    parser.add_argument(
+        "--embedding-url",
+        default="",
+        help="OpenAI 兼容的 embeddings 接口地址（留空则不用向量检索）",
+    )
+    parser.add_argument("--embedding-model", default="", help="嵌入模型名")
+    parser.add_argument("--embedding-key", default="", help="嵌入接口的 API key")
     args = parser.parse_args()
 
     config = MemFadeConfig.from_dict({"storage": {"db_path": args.db}})
-    engine = MemoryEngine(config)
+    embedder = None
+    if args.embedding_url and args.embedding_model:
+        from memfade.embedding import HttpEmbeddingClient
+
+        embedder = HttpEmbeddingClient(
+            base_url=args.embedding_url,
+            api_key=args.embedding_key,
+            model=args.embedding_model,
+        )
+    engine = MemoryEngine(config, embedder=embedder)
     service = MemFadeHTTPService(engine)
     service.start_loop()
 
