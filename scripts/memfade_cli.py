@@ -25,13 +25,20 @@ from memfade import MemFadeConfig, Scope  # noqa: E402
 from memfade.engine import MemoryEngine  # noqa: E402
 
 
-def _engine(db_path: str) -> MemoryEngine:
-    config = MemFadeConfig.from_dict({"storage": {"db_path": db_path, "enable_vector": False}})
+def _engine(db_path: str, self_names: str = "") -> MemoryEngine:
+    config = MemFadeConfig.from_dict(
+        {
+            "storage": {"db_path": db_path, "enable_vector": False},
+            "extraction": {
+                "self_names": tuple(n.strip() for n in (self_names or "").split(",") if n.strip()),
+            },
+        }
+    )
     return MemoryEngine(config)
 
 
 def cmd_health(args: argparse.Namespace) -> int:
-    engine = _engine(args.db)
+    engine = _engine(args.db, getattr(args, "self_names", ""))
     try:
         report = engine.diagnose()
     finally:
@@ -46,6 +53,8 @@ def cmd_health(args: argparse.Namespace) -> int:
     print(f"  缺三元组       : {report['missing_spo']} 条")
     print(f"  完全重复       : {report['exact_duplicates']} 条")
     print(f"  近似重复对     : {report['near_duplicate_pairs']} 对")
+    print(f"  机器人自己的事 : {report.get('self_facts', 0)} 条")
+    print(f"  泛指主语       : {report.get('generic_subjects', 0)} 条")
     print(f"  种类分布       : {report['kinds']}")
     print(f"  档位分布       : {report['statuses']}")
     if report["issues"]:
@@ -109,6 +118,11 @@ def cmd_fade(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="memfade 命令行工具")
     parser.add_argument("--db", default="memfade.db", help="memfade.db 路径")
+    parser.add_argument(
+        "--self-names",
+        default="",
+        help="机器人自己的名字（逗号分隔）：体检时查「主语是机器人自己」的条目",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("health", help="记忆库体检").set_defaults(func=cmd_health)

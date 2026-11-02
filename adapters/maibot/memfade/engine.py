@@ -447,7 +447,11 @@ class MemoryEngine:
 
         from .diagnostics import analyze
 
-        return analyze(self.store, scope.key() if scope else None)
+        return analyze(
+            self.store,
+            scope.key() if scope else None,
+            self_names=self.config.extraction.self_names,
+        )
 
     def export(self, scope: Optional[Scope] = None) -> list:
         """导出记忆（JSON 友好）。"""

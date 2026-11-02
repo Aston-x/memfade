@@ -127,5 +127,56 @@ class TestPrompt(unittest.TestCase):
         self.assertNotIn("{SUBJECT_HINT}", prompt)
 
 
+class TestHealthCheck(unittest.TestCase):
+    """体检要能抓到污染——不然脏库会一直脏着，没人发现。"""
+
+    def _engine(self, tmpdir):
+        from memfade import MemFadeConfig
+        from memfade.engine import MemoryEngine
+        from memfade.types import Scope
+
+        config = MemFadeConfig.from_dict(
+            {
+                "storage": {"db_path": str(tmpdir / "m.db"), "enable_vector": False},
+                "extraction": {"self_names": ("许杏玖",)},
+            }
+        )
+        return MemoryEngine(config), Scope(platform="qq", chat_type="session", chat_id="s1")
+
+    def test_self_facts_are_reported(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine, scope = self._engine(Path(tmp))
+            engine.remember(
+                MemoryDraft(content="许杏玖昨晚一口气刷完了Re", subject="许杏玖", importance=0.7),
+                scope,
+            )
+            engine.remember(
+                MemoryDraft(content="季怡喜欢辣的食物", subject="季怡", importance=0.7),
+                scope,
+            )
+            report = engine.diagnose()
+            self.assertEqual(report["self_facts"], 1)
+            kinds = {issue["kind"] for issue in report["issues"]}
+            self.assertIn("self_facts", kinds)
+            engine.close()
+
+    def test_generic_subject_is_reported(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine, scope = self._engine(Path(tmp))
+            engine.remember(
+                MemoryDraft(content="用户表示自己开通了某个套餐", subject="用户", importance=0.7),
+                scope,
+            )
+            report = engine.diagnose()
+            self.assertEqual(report["generic_subjects"], 1)
+            engine.close()
+
+
 if __name__ == "__main__":
     unittest.main()

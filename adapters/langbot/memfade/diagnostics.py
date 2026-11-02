@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
+from .extract import GENERIC_SUBJECTS
 from .store import MemoryStore
 from .textutil import clause_count as _clause_count
 from .textutil import normalized_hash, similarity
@@ -44,6 +45,7 @@ def analyze(
     *,
     limit: int = 5000,
     near_threshold: float = 0.82,
+    self_names: Sequence[str] = (),
 ) -> Dict[str, Any]:
     """跑一遍体检，返回统计与问题清单。"""
 
@@ -59,6 +61,8 @@ def analyze(
             "missing_spo": 0,
             "exact_duplicates": 0,
             "near_duplicate_pairs": 0,
+            "self_facts": 0,
+            "generic_subjects": 0,
             "kinds": {},
             "statuses": {},
             "issues": [],
@@ -84,6 +88,12 @@ def analyze(
                     break
         if len(near_pairs) >= 200:
             break
+
+    # 污染检查：主语是机器人自己、或者主语是泛指词的条目，
+    # 说明「主语纪律」没拦住（或者库是从别处导进来的）。
+    self_set = {str(n).strip() for n in self_names if str(n).strip()}
+    self_facts = [m for m in memories if self_set and (m.subject or "").strip() in self_set]
+    generic = [m for m in memories if (m.subject or "").strip() in GENERIC_SUBJECTS]
 
     issues: List[Dict[str, Any]] = []
     if too_long:
@@ -126,6 +136,29 @@ def analyze(
                 "hint": f"发现 {len(near_pairs)} 对近似重复（同一件事的多种说法）。",
             }
         )
+    if self_facts:
+        issues.append(
+            {
+                "kind": "self_facts",
+                "count": len(self_facts),
+                "hint": (
+                    "有 %d 条记忆的主语是机器人自己（%s）。"
+                    "记忆库是「关于对方」的，这些条目会让机器人认领别人的记忆。"
+                    % (len(self_facts), "、".join(sorted(self_set)))
+                ),
+                "ids": [m.id for m in self_facts[:20]],
+            }
+        )
+    if generic:
+        issues.append(
+            {
+                "kind": "generic_subjects",
+                "count": len(generic),
+                "hint": "有 %d 条记忆的主语是「用户/对方/他/她」这类泛指词，矛盾检测与画像都用不上它们。"
+                % len(generic),
+                "ids": [m.id for m in generic[:20]],
+            }
+        )
 
     return {
         "total": total,
@@ -136,6 +169,8 @@ def analyze(
         "missing_spo": len(no_spo),
         "exact_duplicates": exact_dupes,
         "near_duplicate_pairs": len(near_pairs),
+        "self_facts": len(self_facts),
+        "generic_subjects": len(generic),
         "kinds": dict(Counter(m.kind.value for m in memories)),
         "statuses": dict(Counter(m.status.value for m in memories)),
         "issues": issues,

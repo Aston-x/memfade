@@ -275,6 +275,22 @@
                 "source": "quality",
                 "field": "report.near_duplicate_pairs"
               }
+            },
+            {
+              "type": "stat",
+              "label": "机器人自己的事",
+              "value": {
+                "source": "quality",
+                "field": "report.self_facts"
+              }
+            },
+            {
+              "type": "stat",
+              "label": "泛指主语",
+              "value": {
+                "source": "quality",
+                "field": "report.generic_subjects"
+              }
             }
           ]
         },
