@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -86,6 +87,8 @@ class MemFadePlugin(Star):
         self.engine = MemoryEngine(mem_cfg)
         self._buffer: Dict[str, List[Dict[str, Any]]] = {}
         self._counter: Dict[str, int] = {}
+        self._tasks: set = set()
+        """后台抽取任务。抽取要等 LLM，不能让它挡住回复。"""
         self._last_injected: Dict[str, str] = {}
 
     # ------------------------------------------------------------------ #
@@ -137,7 +140,19 @@ class MemFadePlugin(Star):
             scope = self._scope_of(event)
             key = scope.key()
             buffer = self._buffer.setdefault(key, [])
-            buffer.append({"role": "user", "content": query})
+            entry = {"role": "user", "content": query}
+            speaker = ""
+            sender = getattr(event, "sender", None)
+            if sender is not None:
+                for attr in ("nickname", "name", "user_name"):
+                    value = getattr(sender, attr, None)
+                    if isinstance(value, str) and value.strip():
+                        speaker = value.strip()
+                        break
+            if speaker:
+                # 带上说话人：抽取器要能分清「谁说的」。
+                entry["speaker"] = speaker
+            buffer.append(entry)
             count = self._counter.get(key, 0) + 1
             self._counter[key] = count
             every = max(1, _as_int(_get_config_value(self.config, "extract_every_n", 3), 3))
@@ -145,11 +160,23 @@ class MemFadePlugin(Star):
                 return
             pending = list(buffer)
             buffer.clear()
+            # 抽取要问一次 LLM（可能几十秒），别让它挡住这一轮回复。
+            task = asyncio.create_task(self._extract_pending(pending, scope, key))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+        except Exception as exc:
+            logger.warning("[memfade] 抽取失败: %s", exc)
+
+    async def _extract_pending(self, pending: List[Dict[str, Any]], scope: Scope, key: str) -> None:
+        """后台跑一次抽取。"""
+
+        try:
             written = await self.engine.remember_from_messages(pending, scope, source=key)
             if written:
                 logger.info("[memfade] 抽取到 %d 条新记忆（%s）", len(written), key)
         except Exception as exc:
             logger.warning("[memfade] 抽取失败: %s", exc)
+            self._buffer.setdefault(key, []).extend(pending)
 
     async def terminate(self) -> None:
         """插件卸载。"""

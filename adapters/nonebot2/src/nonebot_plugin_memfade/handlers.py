@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from nonebot import on_message, on_regex
 from nonebot.log import logger
 from nonebot.matcher import Matcher
@@ -18,15 +20,50 @@ remember_cmd = on_regex(r"^记住\s*(?P<content>.+)$")
 forget_cmd = on_regex(r"^忘掉\s*(?P<content>.+)$")
 query_cmd = on_regex(r"^记忆(?:\s+搜\s*(?P<query>.+))?$")
 
+_extract_tasks: set = set()
+"""后台抽取任务。抽取要等 LLM，不能让它挡住主人的回复。"""
+
+
+def _own_text(event) -> tuple[str, str]:
+    """只留用户自己说的话（丢掉回复/转发段），并带上说话人昵称。
+
+    **引用与转发不是用户的话**——把它们一起喂给抽取器，
+    抽取器就会把别人说过的话记成用户的事。
+    """
+
+    text = ""
+    try:
+        message = event.get_message()
+    except Exception:
+        message = None
+    if message is not None:
+        parts: list[str] = []
+        for segment in message:
+            kind = str(getattr(segment, "type", "") or "").lower()
+            if kind in ("reply", "forward", "node"):
+                continue
+            body = str(getattr(segment, "text", "") or "").strip()
+            if body:
+                parts.append(body)
+        text = " ".join(parts)
+    if not text:
+        try:
+            text = str(event.get_message() or "").strip()
+        except Exception:
+            text = ""
+    speaker = ""
+    try:
+        speaker = str(event.get_user_name() or "").strip()
+    except Exception:
+        speaker = ""
+    return text, speaker
+
 
 @memory_observer.handle()
 async def observe(event) -> None:
     """旁听消息：抽取出记忆，并把记忆文本挂到 event 上。"""
 
-    try:
-        text = str(event.get_message() or "").strip()
-    except Exception:
-        text = ""
+    text, speaker = _own_text(event)
     if not text:
         return
     scope = scope_of(event)
@@ -40,20 +77,31 @@ async def observe(event) -> None:
     if not config.memfade_extract_enabled:
         return
     buffer = _buffer.setdefault(key, [])
-    buffer.append({"role": "user", "content": text})
+    entry = {"role": "user", "content": text}
+    if speaker:
+        entry["speaker"] = speaker
+    buffer.append(entry)
     count = _counter.get(key, 0) + 1
     _counter[key] = count
     if count % max(1, int(config.memfade_extract_every_n)) != 0:
         return
     pending = list(buffer)
     buffer.clear()
+    task = asyncio.create_task(_extract(pending, scope, key))
+    _extract_tasks.add(task)
+    task.add_done_callback(_extract_tasks.discard)
+
+
+async def _extract(pending: list, scope, key: str) -> None:
+    """后台跑一次抽取。"""
+
     try:
         written = await engine.remember_from_messages(pending, scope, source=key)
         if written:
             logger.info(f"[memfade] 抽取到 {len(written)} 条新记忆（{key}）")
     except Exception as exc:
         logger.warning(f"[memfade] 抽取失败: {exc}")
-        buffer.extend(pending)
+        _buffer.setdefault(key, []).extend(pending)
 
 
 @remember_cmd.handle()

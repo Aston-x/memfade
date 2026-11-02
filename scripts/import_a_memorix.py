@@ -501,6 +501,16 @@ def main() -> int:
     parser.add_argument("--maibot-user", default="", help="私聊对方的 QQ 号（算 session_id 用）")
     parser.add_argument("--maibot-group", default="", help="群号（算 session_id 用）")
     parser.add_argument("--maibot-scope", default="", help="路由作用域（算 session_id 用）")
+    parser.add_argument(
+        "--self-names",
+        default="",
+        help="机器人自己的名字（逗号分隔）：主语是它的事实不迁",
+    )
+    parser.add_argument(
+        "--focus",
+        default="",
+        help="只迁这些主语的事（逗号分隔，空=不限制）",
+    )
     args = parser.parse_args()
 
     if not os.path.isfile(args.source):
@@ -629,6 +639,22 @@ def main() -> int:
                     cross_scope=scope.cross_scope,
                 )
             )
+        # 过一道「主语纪律」：迁移旧事实最容易把**机器人自己的事**
+        # 一起搬过来（旧库里也有机器人的人设条目）。
+        if drafts:
+            from memfade.extract import filter_drafts
+
+            kept, dropped = filter_drafts(
+                drafts,
+                self_names=tuple(n.strip() for n in (args.self_names or "").split(",") if n.strip()),
+                focus_subjects=tuple(n.strip() for n in (args.focus or "").split(",") if n.strip()),
+                participants=(),
+                require_person=False,
+                default_subject="",
+            )
+            for content, reason in dropped:
+                print("  丢弃（%s）：%s" % (reason, content[:50]))
+            drafts = kept
         before = engine.store.count(scope.key())
         written = engine.remember_many(drafts, scope)
         after = engine.store.count(scope.key())

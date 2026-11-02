@@ -139,6 +139,51 @@ class MemFadeHTTPService:
             written.extend(self.engine.remember_atomic(draft, scope))
         return {"ok": True, "written": len(written), "ids": [m.id for m in written]}
 
+    def extract(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """从一段对话里抽取记忆（需要侧车配了 LLM）。
+
+        为什么要有这个接口：``/remember`` 是「原样写进去」——
+        别的框架（Koishi）拿它当抽取用，等于把整句聊天记录塞进记忆库，
+        记忆库就成了聊天记录备份，而不是「关于这个人的事实」。
+        配了 LLM 就走这里，让模型来提炼。
+        """
+
+        scope = _scope_from(payload)
+        raw_messages = payload.get("messages")
+        messages: list[dict[str, Any]] = []
+        if isinstance(raw_messages, list):
+            for item in raw_messages:
+                if not isinstance(item, dict):
+                    continue
+                content = str(item.get("content") or "").strip()
+                if not content:
+                    continue
+                entry = {"role": str(item.get("role") or "user"), "content": content}
+                speaker = str(item.get("speaker") or "").strip()
+                if speaker:
+                    entry["speaker"] = speaker
+                messages.append(entry)
+        if not messages:
+            return {"ok": True, "written": 0, "ids": [], "note": "没有可抽取的消息"}
+        if self.engine.llm is None:
+            # 没配 LLM就别硬抽：规则抽取会把整句话原样当事实存下来，
+            # 那不如让调用方自己决定要不要原样写入。
+            return {
+                "ok": True,
+                "written": 0,
+                "ids": [],
+                "llm": False,
+                "note": "侧车没配 LLM，只能原样写入",
+            }
+        written = self._run_async(
+            self.engine.remember_from_messages(
+                messages,
+                scope,
+                source=str(payload.get("source") or "http-extract"),
+            )
+        )
+        return {"ok": True, "written": len(written), "ids": [m.id for m in written], "llm": True}
+
     def recall(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         scope = _scope_from(payload)
         query = str(payload.get("query") or "")
@@ -291,6 +336,8 @@ class MemFadeHandler(BaseHTTPRequestHandler):
         try:
             if path == "/remember":
                 self._send(200, self.service.remember(payload))
+            elif path == "/extract":
+                self._send(200, self.service.extract(payload))
             elif path == "/recall":
                 self._send(200, self.service.recall(payload))
             elif path == "/context":
@@ -340,6 +387,13 @@ def main() -> int:
     )
     parser.add_argument("--embedding-model", default="", help="嵌入模型名")
     parser.add_argument("--embedding-key", default="", help="嵌入接口的 API key")
+    parser.add_argument(
+        "--llm-url",
+        default="",
+        help="OpenAI 兼容的 chat 接口地址（留空则只能原样写入，不能抽取）",
+    )
+    parser.add_argument("--llm-model", default="", help="抽取用的模型名")
+    parser.add_argument("--llm-key", default="", help="LLM 接口的 API key")
     args = parser.parse_args()
 
     config = MemFadeConfig.from_dict({"storage": {"db_path": args.db}})
@@ -353,6 +407,16 @@ def main() -> int:
             model=args.embedding_model,
         )
     engine = MemoryEngine(config, embedder=embedder)
+    if args.llm_url and args.llm_model:
+        from memfade.llm import HttpLLMClient
+
+        engine.llm = HttpLLMClient(
+            base_url=args.llm_url,
+            api_key=args.llm_key,
+            model=args.llm_model,
+        )
+        engine.extractor.llm = engine.llm
+        sys.stderr.write("[memfade-http] 已接上 LLM：%s\n" % args.llm_model)
     service = MemFadeHTTPService(engine)
     service.start_loop()
 

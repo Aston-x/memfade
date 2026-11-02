@@ -357,6 +357,35 @@ python scripts/memfade_cli.py --db memfade.db fade                # 跑一轮整
 体检会指出：记忆太长（注入时会被截断）、一条塞了多件事、缺三元组
 （矛盾检测抓不到）、还有多少近似重复。
 
+审一份库（作用域分布、全文索引与正文是否一致、疑似测试数据）：
+
+```bash
+python scripts/audit_db.py --db memfade.db
+```
+
+清理已经脏了的库（按规则出计划，`--apply` 前自动备份）：
+
+```bash
+python scripts/clean_library.py --db memfade.db --dry-run
+python scripts/clean_library.py --db memfade.db --apply
+```
+
+### HTTP 侧车
+
+给不方便装 Python 插件的框架用（Koishi 就是这么接的）：
+
+```bash
+python adapters/http/server.py --db memfade.db --port 8787 \
+    --token <令牌> --llm-url <OpenAI 兼容地址> --llm-model <模型名>
+```
+
+接口：`/remember`（原样写一条）、`/extract`（**从一段对话里抽取事实**，
+需要配 LLM；Koishi 优先走这个，没配 LLM 才退回 `/remember`）、
+`/recall`、`/context`、`/consolidate`、`/forget`、`/pin`、`/stats`。
+
+⚠ `/remember` 是「原样写进去」——拿它当抽取用，
+记忆库就变成了聊天记录备份，而不是「关于这个人的事实」。
+
 ### 从旧的记忆库迁移
 
 已经有一套记忆系统（比如 A_Memorix）？可以把它的事实**洗干净**再带过来：
@@ -372,6 +401,9 @@ python scripts/import_a_memorix.py \
 流程是：读旧库 → 用宿主 LLM 规范化成「一件事一条 + 三元组」→ memfade 去重入库。
 旧库里「称对方为宝宝」有 3 种说法、「二十块加价与铁子无关」有 4 种说法，
 迁移后会被合并。实测 41 条旧事实 → 入库 21 条。
+
+迁移也会过一道**主语纪律**（`--self-names` / `--focus`）：
+旧库里也有机器人自己的人设条目，别把它们一起搬过来。
 
 作用域用 MaiBot 的 `session_id` 公式算，**chat_type 必须是 `session`**——
 写成 `group`/`private` 机器人就读不到。

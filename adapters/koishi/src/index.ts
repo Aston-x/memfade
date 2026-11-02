@@ -146,6 +146,18 @@ export class MemoryService {
     this.counter.set(key, count)
     if (count % Math.max(1, this.config.extractEveryN) !== 0) return
     this.buffer.set(key, [])
+    // 有 LLM 就走抽取：把整句话提炼成「关于这个人的事实」。
+    // 原样写入等于把聊天记录塞进记忆库——那是备份，不是记忆。
+    const speaker = String(session?.author?.name ?? session?.author?.nickname ?? '').trim()
+    try {
+      const result = await this.request('/extract', {
+        scope,
+        messages: list.map((content) => ({ role: 'user', content, speaker })),
+      })
+      if (result?.llm) return
+    } catch (error) {
+      // 老侧车没有 /extract，或者没配 LLM——退回原样写入。
+    }
     await this.request('/remember', {
       scope,
       drafts: list.map((content) => ({ content, importance: 0.5 })),

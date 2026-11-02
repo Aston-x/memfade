@@ -17,6 +17,15 @@ class Config(BaseModel):
     memfade_llm_base_url: str = Field(default="", description="抽取用的 LLM 接口（留空则用规则抽取）")
     memfade_llm_api_key: str = Field(default="", description="抽取用的 LLM API Key")
     memfade_llm_model: str = Field(default="", description="抽取用的 LLM 模型名")
+    memfade_self_names: list[str] = Field(
+        default_factory=list,
+        description="机器人自己的名字：主语是它时不入库",
+    )
+    memfade_focus_subjects: list[str] = Field(
+        default_factory=list,
+        description="只记这些主语的事（留空=不限制）",
+    )
+    memfade_subject_hint: str = Field(default="", description="抽取提示词里的人物提示，形如「（小许 / 季怡）」")
 
 
 try:

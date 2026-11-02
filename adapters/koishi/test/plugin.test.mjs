@@ -114,5 +114,22 @@ describe('memfade koishi 插件', () => {
     assert.ok(ctx.memfade, '应该把服务挂到 ctx.memfade 上')
     assert.equal(ctx.memfade.config.topK, 6)
   })
+
+  it('侧车没配 LLM 时，抽取退回原样写入而不是报错', async () => {
+    const service = new MemoryService({ logger: () => undefined }, {
+      endpoint: ENDPOINT,
+      token: '',
+      extractEnabled: true,
+      extractEveryN: 1,
+      topK: 6,
+    })
+    const session = { channel: { id: 'koishi-group', type: 'group' }, author: { id: 'u1' } }
+    const content = `没有 LLM 时的原样写入 #${Date.now()}`
+    // 走的是 middleware 之外的 collect：直接调它，
+    // 因为 middleware 需要完整的 Koishi 运行时。
+    await service.collect?.(session, content)
+    const ctx = await service.context(session, '原样写入')
+    assert.ok(ctx.text.includes(content), '没配 LLM 时应该退回 /remember 原样写入')
+  })
 })
 

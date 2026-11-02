@@ -33,6 +33,9 @@ def _build_engine() -> MemoryEngine:
                 "enabled": config.memfade_extract_enabled,
                 "every_n_turns": max(1, int(config.memfade_extract_every_n)),
                 "min_importance": float(config.memfade_min_importance),
+                "subject_hint": str(config.memfade_subject_hint or ""),
+                "self_names": tuple(config.memfade_self_names or ()),
+                "focus_subjects": tuple(config.memfade_focus_subjects or ()),
             },
             "retrieval": {
                 "top_k": max(1, int(config.memfade_top_k)),

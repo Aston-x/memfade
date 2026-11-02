@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List
 
@@ -59,6 +60,22 @@ def _session_of(event_ctx: context.EventContext) -> str:
     return "default"
 
 
+def _speaker_name(event_ctx: context.EventContext) -> str:
+    """取说话人的名字（给抽取器当主语的参考）。"""
+
+    event = getattr(event_ctx, "event", None)
+    for attr in ("sender_name", "user_name", "nickname", "sender"):
+        value = getattr(event, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if value is not None and not isinstance(value, (str, bytes)):
+            for sub in ("name", "nickname", "card"):
+                sub_value = getattr(value, sub, None)
+                if isinstance(sub_value, str) and sub_value.strip():
+                    return sub_value.strip()
+    return ""
+
+
 def _query_text(event_ctx: context.EventContext) -> str:
     """取本轮用户输入。
 
@@ -97,6 +114,8 @@ class MemFadeInjector(EventListener):
         super().__init__()
         self._buffer: Dict[str, List[Dict[str, Any]]] = {}
         self._counter: Dict[str, int] = {}
+        self._tasks: set = set()
+        """后台抽取任务。抽取要等 LLM，不能让它挡住回复。"""
         self._last_injected: Dict[str, str] = {}
 
         @self.handler(events.PromptPreProcessing)
@@ -161,7 +180,13 @@ class MemFadeInjector(EventListener):
         scope = self._scope(event_ctx)
         key = scope.key()
         buffer = self._buffer.setdefault(key, [])
-        buffer.append({"role": "user", "content": query})
+        entry = {"role": "user", "content": query}
+        speaker = _speaker_name(event_ctx)
+        if speaker:
+            # 带上说话人：抽取器要能分清「谁说的」，
+            # 否则主人一句「是你自己看的」会被记成机器人的记忆。
+            entry["speaker"] = speaker
+        buffer.append(entry)
         count = self._counter.get(key, 0) + 1
         self._counter[key] = count
         config = self.plugin.get_config() or {}
@@ -173,8 +198,21 @@ class MemFadeInjector(EventListener):
             return
         pending = list(buffer)
         buffer.clear()
-        written = await engine.remember_from_messages(pending, scope, source=key)
-        if written:
-            logger.info("[memfade] 抽取到 %d 条新记忆（%s）", len(written), key)
+        # 抽取要问一次 LLM（可能几十秒），别让它挡住这一轮回复。
+        task = asyncio.create_task(self._extract_pending(pending, scope, key))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _extract_pending(self, pending: List[dict], scope: Scope, key: str) -> None:
+        """后台跑一次抽取。"""
+
+        engine = self.plugin.engine
+        try:
+            written = await engine.remember_from_messages(pending, scope, source=key)
+            if written:
+                logger.info("[memfade] 抽取到 %d 条新记忆（%s）", len(written), key)
+        except Exception as exc:
+            logger.warning("[memfade] 抽取失败: %s", exc)
+            self._buffer.setdefault(key, []).extend(pending)
 
 

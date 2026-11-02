@@ -581,6 +581,11 @@ class MemoryRetriever:
                 # 「2026年11月1日这周更新里有《牧神记5》」过两周就过期了。
                 if _has_time_marker(mem.content):
                     score *= 0.35
+                # 「与…无关」「并不是…」这类是**消歧**，
+                # 说的是某件事**不成立**，不是「这个人是谁」。
+                # 画像是常驻的，塞这种句子只会占位置。
+                if _is_disambiguation(mem.content):
+                    score *= 0.35
             scored.append((score, mem))
         scored.sort(key=lambda pair: (pair[0], -len(pair[1].content), pair[1].created_at), reverse=True)
 
@@ -689,6 +694,21 @@ def _has_time_marker(text: str) -> bool:
     """判断一条记忆是不是带时效性的（日程、播出表、截止日期）。"""
 
     return bool(_TIME_MARKER_RE.search(text or ""))
+
+
+_DISAMBIGUATION_MARKERS = ("无关", "不涉及", "并非", "并不是", "而不是", "不作为", "算不上")
+"""消歧句的标志。
+
+⚠ 不要用单独的「不」——「季怡不吃香菜」是**忌讳**，
+那是画像里最该常驻的一条。「不」只用来筛「某件事不成立」的说法。
+"""
+
+
+def _is_disambiguation(text: str) -> bool:
+    """判断一条记忆是不是「消歧」而不是「这个人是谁」。"""
+
+    body = str(text or "")
+    return any(marker in body for marker in _DISAMBIGUATION_MARKERS)
 
 
 def _clip(text: str, limit: int) -> str:
