@@ -357,6 +357,18 @@ def _clamp_importance(kind: MemoryKind, value: float) -> float:
     return min(high, max(low, float(value)))
 
 
+def _is_empty_answer(raw: str) -> bool:
+    """模型是不是明确回答了「没有值得记的」（`[]`）。
+
+    和「输出被截断 / 解析不出来」是两回事：
+    前者是**答案**，后者是**故障**。
+    提示词变严之后，前者成了常态——当成故障重试，白烧三次 LLM。
+    """
+
+    payload = parse_json_block(raw or "")
+    return isinstance(payload, list) and not payload
+
+
 def _is_rate_limited(exc: BaseException) -> bool:
     """这个异常是不是「限流」？
 
@@ -585,6 +597,11 @@ class MemoryExtractor:
             drafts = self._parse(raw)
             if drafts:
                 return raw, drafts
+            if _is_empty_answer(raw):
+                # 模型明确回答「这段对话里没有值得记的」（`[]`）。
+                # ⚠ 这**不是故障**：提示词变严之后「没有值得记的」成了常态，
+                # 当成失败重试 3 次，等于每次闲聊都白烧三次 LLM。
+                return raw, []
             # 输出为空：是被 max_tokens 截断了，加大预算重来
             last_error = "模型没有返回可解析的结果"
             budget *= 2

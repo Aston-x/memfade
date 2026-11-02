@@ -170,6 +170,48 @@ class TestContextLine(unittest.TestCase):
         self.assertEqual(dropped[0][1], "self_fact")
 
 
+class TestEmptyAnswer(unittest.TestCase):
+    """模型回答「没有值得记的」（`[]`）是**答案**，不是故障。
+
+    提示词变严之后这是常态——当成故障重试 3 次，
+    等于每次闲聊都白烧三次 LLM（实机日志里看到过：3 次调用、1021 词提示）。
+    """
+
+    def test_empty_array_is_not_retried(self):
+        import asyncio
+
+        from memfade.extract import MemoryExtractor
+
+        calls = {"n": 0}
+
+        class _LLM:
+            async def complete(self, prompt, *, system="", max_tokens=4000, temperature=0.1):
+                calls["n"] += 1
+                return "[]"
+
+        extractor = MemoryExtractor(ExtractionConfig(), _LLM())
+        result = asyncio.run(extractor.extract([{"role": "user", "content": "今天天气不错"}]))
+        self.assertEqual(calls["n"], 1, "空数组不该重试")
+        self.assertEqual(result.drafts, [])
+        self.assertEqual(result.error, "", "空数组不是错误")
+
+    def test_unparseable_output_is_still_retried(self):
+        import asyncio
+
+        from memfade.extract import MemoryExtractor
+
+        calls = {"n": 0}
+
+        class _LLM:
+            async def complete(self, prompt, *, system="", max_tokens=4000, temperature=0.1):
+                calls["n"] += 1
+                return "我今天有点累，改天再聊吧"
+
+        extractor = MemoryExtractor(ExtractionConfig(), _LLM())
+        result = asyncio.run(extractor.extract([{"role": "user", "content": "今天天气不错"}]))
+        self.assertGreater(calls["n"], 1, "解析不出来应该重试")
+
+
 class TestHealthCheck(unittest.TestCase):
     """体检要能抓到污染——不然脏库会一直脏着，没人发现。"""
 
