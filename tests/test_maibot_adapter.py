@@ -468,6 +468,35 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         self.assertIn("记住了", sent)
         self.assertIn("季怡喜欢辣的食物", sent, "「/记忆」没有把记下的内容列出来")
 
+    async def test_recall_tool_is_visible_to_the_model(self):
+        """记忆要能「主动深挖」——宿主旧记忆系统的检索工具退场后由它顶上。
+
+        默认可见性是 deferred（模型看不见），必须显式声明 visible。
+        """
+
+        plugin = self.plugin
+        plugin._ctx.llm.reply = (
+            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+        )
+        await plugin.handle_after_process(message=make_message("我喜欢辣的"))
+        await plugin._drain_extractions()
+        result = await plugin.tool_recall(query="辣", limit=3, stream_id="sess-1")
+        self.assertIn("辣的食物", result["content"])
+
+    async def test_recall_tool_requires_an_actual_match(self):
+        """显式检索必须真的命中——不把「最近写入」但无关的记忆混进来。"""
+
+        plugin = self.plugin
+        plugin._ctx.llm.reply = (
+            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+        )
+        await plugin.handle_after_process(message=make_message("我喜欢辣的"))
+        await plugin._drain_extractions()
+        result = await plugin.tool_recall(query="显卡驱动", limit=5, stream_id="sess-1")
+        self.assertIn("没有相关的记录", result["content"])
+
     async def test_extraction_does_not_block_the_reply(self):
         """抽取要等 LLM（实机 30~60 秒），不能挡住主人的回复。
 

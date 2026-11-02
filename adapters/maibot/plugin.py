@@ -1304,6 +1304,47 @@ class MemFadePlugin(MaiBotPlugin):
             % (len(written), "；".join(m.content for m in written)),
         }
 
+    @Tool(
+        "recall_memories",
+        description="检索长期记忆：当对方问起「我以前说过什么」「还记得吗」"
+        "「之前那件事」这类需要翻旧账的问题时用。"
+        "记忆库会自动注入相关记忆，这个工具用来**主动深挖**"
+        "（比如对方明确要看全部相关记录）。",
+        # ⚠ 必须显式声明 visibility：宿主给插件工具的默认可见性是 **deferred**，
+        # 不进 planner 的工具清单，模型得先调 tool_search() 才发现得了。
+        visibility="visible",
+        parameters={
+            "query": {"type": "string", "description": "要查什么（关键词或一句话）", "required": True},
+            "limit": {"type": "integer", "description": "最多返回几条（默认 5）", "required": False},
+        },
+    )
+    async def tool_recall(self, query: str = "", limit: int = 5, **kwargs: Any) -> Dict[str, Any]:
+        """让模型主动检索长期记忆（替代宿主旧记忆系统的「检索长期记忆」工具）。"""
+
+        engine = self._engine
+        text = (query or "").strip()
+        if engine is None or not text:
+            return {"name": "recall_memories", "content": "没查到：检索词是空的"}
+        scope = self._scope_from_kwargs(kwargs)
+        top_k = max(1, min(10, int(limit or 5)))
+        try:
+            vector = await engine.embed_query(text)
+        except Exception:
+            vector = None
+        # ⚠ require_match=True：显式检索必须真的命中，
+        # 不把「最近写入」但跟问题无关的记忆混进来。
+        hits = engine.recall(text, scope, top_k=top_k, query_vector=vector, require_match=True)
+        if not hits:
+            return {"name": "recall_memories", "content": "记忆库里没有相关的记录。"}
+        lines = []
+        for hit in hits:
+            marker = "（可能已经变了）" if hit.tier == "echo" else ""
+            lines.append("· %s%s" % (hit.memory.content, marker))
+        return {
+            "name": "recall_memories",
+            "content": "查到 %d 条：\n%s" % (len(hits), "\n".join(lines)),
+        }
+
     # ------------------------------------------------------------------ #
     # WebUI / API
     # ------------------------------------------------------------------ #

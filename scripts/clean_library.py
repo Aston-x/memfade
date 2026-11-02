@@ -240,6 +240,23 @@ def _apply(db_path: str, items: Sequence[Dict[str, Any]]) -> Dict[str, int]:
     return stats
 
 
+def _purge(db_path: str) -> Dict[str, int]:
+    """清空整个记忆库（全文索引有触发器，会跟着删）。"""
+
+    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        total = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        conn.execute("DELETE FROM memories")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {"deleted": int(total)}
+
+
 def _ids(text: str) -> List[int]:
     return [int(x) for x in str(text or "").replace(" ", "").split(",") if x]
 
@@ -321,9 +338,27 @@ def main() -> int:
         default="",
         help="改写三元组：id=主语|谓语|宾语，多条用 || 分隔",
     )
+    parser.add_argument(
+        "--purge",
+        action="store_true",
+        help="清空整个记忆库（不留任何条目）",
+    )
     args = parser.parse_args()
 
     rows = _load(args.db)
+    if args.purge:
+        if not args.apply:
+            print("会清空 %d 条记忆（--apply 才真删）" % len(rows))
+            for item in rows[:20]:
+                print("  #%-4s %s" % (item["id"], (item["content"] or "")[:40]))
+            if len(rows) > 20:
+                print("  … 还有 %d 条" % (len(rows) - 20))
+            return 0
+        backup = _backup(args.db)
+        print("已备份：%s" % backup)
+        stats = _purge(args.db)
+        print("已清空 %d 条记忆。" % stats["deleted"])
+        return 0
     rewrites = _rewrite_map(args.rewrite)
     triples = _triple_map(args.triple)
     # 改写要先落地：规则是看着内容与主语判断的，
