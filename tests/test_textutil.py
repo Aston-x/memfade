@@ -83,8 +83,14 @@ class TestContentWords(unittest.TestCase):
 
 class TestBestClause(unittest.TestCase):
     def test_keeps_subject_clause_when_it_is_real(self):
+        """长内容里，第一句通常带主语，要保住它。"""
+
         self.assertEqual(
-            best_clause("许杏玖喜欢辣的食物，也讨厌香菜"),
+            best_clause(
+                "许杏玖喜欢辣的食物，也讨厌香菜，"
+                "而且每周三都会去楼下那家新开的猫咖坐一会儿看看猫，"
+                "回来还会跟我讲今天又遇到了哪只猫"
+            ),
             "许杏玖喜欢辣的食物",
         )
 
@@ -92,9 +98,19 @@ class TestBestClause(unittest.TestCase):
         """「后来……」是铺垫，该挑后面有内容的一句。"""
 
         self.assertEqual(
-            best_clause("后来他跟朋友去吃了炸鸡，许杏玖很开心"),
+            best_clause(
+                "后来他跟朋友去吃了炸鸡，许杏玖很开心，"
+                "然后又去买了点东西回来做饭吃，"
+                "路上还跟他说起下周要一起去的地方"
+            ),
             "许杏玖很开心",
         )
+
+    def test_keeps_short_text_whole(self):
+        """本来就够短的内容不用压——压它只会丢信息。"""
+
+        text = "10月起零关注零粉丝、只有几个赞，曾被卖家临时加价拉黑二十块"
+        self.assertEqual(best_clause(text, 40), text)
 
 
 class TestCjkUnigrams(unittest.TestCase):

@@ -36,6 +36,18 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", folded).strip()
 
 
+def normalize_light(text: str) -> str:
+    """只折叠空白，**不动标点**。
+
+    NFKC 会把全角标点折成半角：「，」→「,」、「（」→「(」。
+    那是给**索引**用的（查询和内容两边都折，匹配才一致）；
+    但**给人看的**内容（gist 摘要）折了就变味了——
+    一段中文里混着半角逗号，读着就不是那个味。
+    """
+
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
 def normalize_key(text: str) -> str:
     """归一化成去标点、去空白、小写的比较键。
 
@@ -166,20 +178,12 @@ def split_sentences(text: str) -> list[str]:
 def truncate(text: str, limit: int, ellipsis: str = "…") -> str:
     """按字符截断。"""
 
-    key = normalize(text)
+    # 用轻量规范化：截断出来的内容是要给人看的，
+    # NFKC 把全角标点折成半角就变味了。
+    key = normalize_light(text)
     if limit <= 0 or len(key) <= limit:
         return key
     return key[: max(0, limit - len(ellipsis))] + ellipsis
-
-
-def first_clause(text: str, limit: int = 40) -> str:
-    """取第一个子句并截断——LLM 不可用时做 gist 的兜底策略。"""
-
-    if not text:
-        return ""
-    parts = re.split(r"[，,。；;：:、]", normalize(text))
-    head = next((p.strip() for p in parts if p.strip()), normalize(text))
-    return truncate(head, limit)
 
 
 _FILLER_PREFIXES = (
@@ -214,9 +218,13 @@ def best_clause(text: str, limit: int = 40) -> str:
     **第一句不是铺垫就用它；是铺垫才从后面挑一句有实词的。**
     """
 
-    key = normalize(text)
+    key = normalize_light(text)
     if not key:
         return ""
+    if len(key) <= limit:
+        # 本来就够短，压它只会丢信息（gist 的作用是「细节已不可考」，
+        # 可它本来就没细节）。
+        return key
     clauses = [c.strip() for c in re.split(r"[，,。；;：:、！？!?\n]", key) if c.strip()]
     if not clauses:
         return truncate(key, limit)

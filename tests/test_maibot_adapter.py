@@ -478,6 +478,34 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         finally:
             await fresh.on_unload()
 
+    async def test_selfcheck_does_not_touch_the_library(self):
+        """诊断动作不能改记忆库。
+
+        注入会**强化**记忆（强度回升、锚点重置、被想起次数 +1），
+        而被想起次数还参与稳定性的间隔重复成长——
+        诊断一次就等于给记忆续命。面板的自检按钮更不该。
+        """
+
+        plugin = self.plugin
+        plugin._ctx.llm.reply = (
+            '[{"content":"许杏玖喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+        )
+        await plugin.handle_after_process(message=make_message("我喜欢辣的"))
+        engine = plugin._engine
+        before = {
+            m.id: (m.recall_count, m.strength, m.anchor_at)
+            for m in engine.store.iter_scope("qq:session:sess-1", limit=50)
+        }
+        self.assertTrue(before)
+
+        await plugin.memfade_selfcheck(query="许杏玖喜欢辣的食物")
+        after = {
+            m.id: (m.recall_count, m.strength, m.anchor_at)
+            for m in engine.store.iter_scope("qq:session:sess-1", limit=50)
+        }
+        self.assertEqual(before, after, "自检改动了记忆库")
+
     async def test_scope_parsing_private(self):
         from adapters.maibot.plugin import MemFadePlugin
 

@@ -597,7 +597,9 @@ class MemFadePlugin(MaiBotPlugin):
             self.ctx.logger.warning("[memfade] 注入回复提示失败: %s", exc)
             return None
 
-    async def _inject_into_items(self, kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def _inject_into_items(
+        self, kwargs: Dict[str, Any], *, reinforce: bool = True
+    ) -> Optional[Dict[str, Any]]:
         """把召回的记忆写进 Context Items。
 
         为什么用 ``maisaka.*.before_request`` 而不是 ``chat.receive.after_process``：
@@ -609,6 +611,12 @@ class MemFadePlugin(MaiBotPlugin):
           正好是记忆的作用域键；
         * 而且能**直接改写真正发给模型的 Context Items**，
           不会像「往历史里追加」那样被上下文裁剪顺手丢掉。
+
+        ⚠ ``reinforce=False``：**读上下文也是写**。
+        注入会强化被注入的记忆（残留学习：强度回升、锚点重置、
+        被想起次数 +1）。而 ``recall_count`` 还参与稳定性的间隔重复成长，
+        诊断动作（面板自检）如果走默认路径，就把记忆的寿命拉长了好几倍——
+        **诊断绝不能改库**。
         """
 
         engine = self._engine
@@ -638,13 +646,16 @@ class MemFadePlugin(MaiBotPlugin):
                 header=self.config.memory.inject_header or "记忆",
                 # 画像里已经写过的，别在记忆块里再写一遍
                 exclude_ids=profile.ids,
+                # 强化只做一次（build_context 内部也会强化，靠冷却期兜着，
+                # 但「读上下文也是写」这件事得在一个地方说清楚）
+                reinforce=False,
             )
             body = self._wrap_context(context.text, profile.text)
             if not body:
                 return None
             new_items = list(items)
             new_items.insert(self._insert_index(items), self._build_memory_item(items, body))
-            if context.hits:
+            if reinforce and context.hits:
                 engine.reinforce([hit.memory.id for hit in context.hits])
             # ⚠ 必须**整体复制**原始 kwargs 再替换 items：
             # 宿主用 modified_kwargs 整体替换载荷，漏掉 item_schema_version
@@ -1222,7 +1233,10 @@ class MemFadePlugin(MaiBotPlugin):
             }
         ]
         result = await self._inject_into_items(
-            {"items": items, "item_schema_version": 1, "session_id": scope.chat_id}
+            {"items": items, "item_schema_version": 1, "session_id": scope.chat_id},
+            # 诊断动作**不碰记忆库**：注入会强化记忆（强度、锚点、被想起次数），
+            # 而被想起次数还参与间隔重复成长——诊断一次就等于给记忆续命。
+            reinforce=False,
         )
         if result is None:
             return {"ok": True, "injected": False, "reason": "没有召回任何记忆"}
