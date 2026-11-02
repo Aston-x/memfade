@@ -252,6 +252,37 @@ class MemFadeHTTPService:
         scope = _scope_from(payload) if payload.get("scope") else None
         return {"ok": True, "stats": self.engine.stats(scope)}
 
+    def list_memories(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """列出某个作用域里最近记下的内容。
+
+        为什么单独开一个接口：只给数字（「记住了 12 条」）没人能判断记忆库干不干净，
+        得**看得见具体内容**才知道有没有记错东西。
+        """
+
+        scope = _scope_from(payload)
+        limit = max(1, min(50, int(payload.get("limit") or 10)))
+        try:
+            ids = [mid for mid, _ in self.engine.store.recent(scope.key(), limit=limit)]
+            memories = sorted(
+                self.engine.store.get_many(ids), key=lambda m: m.created_at, reverse=True
+            )
+        except Exception:
+            memories = []
+        return {
+            "ok": True,
+            "memories": [
+                {
+                    "id": m.id,
+                    "content": m.content,
+                    "kind": m.kind.value,
+                    "status": m.status.value,
+                    "importance": round(m.importance, 3),
+                    "created_at": m.created_at,
+                }
+                for m in memories
+            ],
+        }
+
 
 def _kind_of(value: Any) -> MemoryKind:
     try:
@@ -348,6 +379,12 @@ class MemFadeHandler(BaseHTTPRequestHandler):
                 self._send(200, self.service.forget(payload))
             elif path == "/pin":
                 self._send(200, self.service.pin(payload))
+            elif path == "/list":
+                self._send(200, self.service.list_memories(payload))
+            elif path == "/stats":
+                # GET 也能取（浏览器直接打开就能看），POST 同样受理——
+                # 前端框架（Koishi 等）默认用 POST。
+                self._send(200, self.service.stats(payload))
             else:
                 self._send(404, {"ok": False, "error": "not found"})
         except Exception as exc:

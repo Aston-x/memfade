@@ -101,8 +101,20 @@ describe('memfade koishi 插件', () => {
   })
 
   it('apply 会注册服务', () => {
+    const commands = []
     const ctx = {
       logger: () => undefined,
+      // 假 Koishi 的 ctx：记录注册了哪些指令
+      command: (def, desc) => {
+        const entry = { def, desc, action: null }
+        commands.push(entry)
+        return {
+          action: (fn) => {
+            entry.action = fn
+            return entry
+          },
+        }
+      },
     }
     apply(ctx, {
       endpoint: ENDPOINT,
@@ -113,6 +125,31 @@ describe('memfade koishi 插件', () => {
     })
     assert.ok(ctx.memfade, '应该把服务挂到 ctx.memfade 上')
     assert.equal(ctx.memfade.config.topK, 6)
+    const names = commands.map((c) => c.def)
+    for (const expected of ['记忆', '记忆.搜 <query>', '记忆.整理', '记忆.置顶 <content>', '记住 <content>', '忘掉 <content>']) {
+      assert.ok(names.includes(expected), `缺少指令：${expected}`)
+      assert.ok(commands.find((c) => c.def === expected).action, `指令没有动作：${expected}`)
+    }
+  })
+
+  it('记忆 状态 会列出记下的内容', async () => {
+    const service = new MemoryService({ logger: () => undefined }, {
+      endpoint: ENDPOINT,
+      token: '',
+      extractEnabled: true,
+      extractEveryN: 3,
+      topK: 6,
+    })
+    const session = { channel: { id: 'koishi-group', type: 'group' }, author: { id: 'u1' } }
+    const content = `列出内容用的记忆 #${Date.now()}`
+    await service.remember(session, content, 'semantic', 0.9)
+    const stats = await service.stats(session)
+    const recent = await service.list(session, 8)
+    assert.ok(stats.total >= 1, '侧车没返回统计')
+    assert.ok(
+      recent.some((m) => m.content === content),
+      '侧车没列出刚写入的记忆',
+    )
   })
 
   it('侧车没配 LLM 时，抽取退回原样写入而不是报错', async () => {

@@ -135,6 +135,39 @@ export class MemoryService {
     return (result.hits ?? []) as MemFadeHit[]
   }
 
+  /** 这个作用域的统计。 */
+  async stats(session: any) {
+    const result = await this.request('/stats', { scope: this.scopeOf(session) })
+    return result.stats ?? {}
+  }
+
+  /** 最近记下的内容——**要看得见**才知道记忆库干不干净。 */
+  async list(session: any, limit = 8): Promise<any[]> {
+    const result = await this.request('/list', { scope: this.scopeOf(session), limit })
+    return (result.memories ?? []) as any[]
+  }
+
+  /** 跑一轮整理（重算淡化档位、合并重复、仲裁矛盾）。 */
+  async maintain(session: any) {
+    const result = await this.request('/consolidate', { scope: this.scopeOf(session) })
+    return result.report ?? {}
+  }
+
+  /** 置顶一条记忆（此后永不淡化）。 */
+  async pin(session: any, content: string, pinned = true) {
+    const hits = await this.recall(session, content)
+    if (!hits.length) return null
+    const target = hits[0]
+    await this.request('/pin', { scope: this.scopeOf(session), id: target.id, pinned })
+    return target
+  }
+
+  /** 忘掉一条记忆。 */
+  async forget(session: any, content: string) {
+    const result = await this.request('/forget', { scope: this.scopeOf(session), content })
+    return result
+  }
+
   /** 送去抽取。 */
   private async collect(session: any, text: string) {
     const scope = this.scopeOf(session)
@@ -204,6 +237,72 @@ declare module 'koishi' {
 
 export const apply = (ctx: Context, config: MemFadeConfig) => {
   ctx.memfade = new MemoryService(ctx, config)
+  registerCommands(ctx, config)
+}
+
+/**
+ * 指令：查状态、检索、整理、置顶、记住、忘掉。
+ *
+ * 只给数字（「记住了 12 条」）没人能判断记忆库干不干净——
+ * 得**看得见具体内容**才知道有没有记错东西。
+ */
+function registerCommands(ctx: Context, config: MemFadeConfig) {
+  const service = ctx.memfade
+
+  ctx.command('记忆', '查看这个会话记住了多少东西').action(async ({ session }) => {
+    const [stats, recent] = await Promise.all([
+      service.stats(session).catch(() => ({})),
+      service.list(session, 8).catch(() => []),
+    ])
+    const byStatus = stats.by_status ?? {}
+    const lines = [
+      `这个会话目前记住了 ${stats.total ?? 0} 条：` +
+        `活跃 ${byStatus.active ?? 0} 条，淡出中 ${byStatus.fading ?? 0} 条，` +
+        `已成摘要 ${byStatus.gisted ?? 0} 条，已归档 ${byStatus.archived ?? 0} 条。`,
+    ]
+    if (recent.length) {
+      lines.push('最近记下的：')
+      for (const memory of recent) {
+        const marker = memory.status === 'active' ? '' : '（已淡出）'
+        lines.push(`· ${memory.content}${marker}`)
+      }
+    }
+    return lines.join('\n')
+  })
+
+  ctx.command('记忆.搜 <query>').action(async ({ session }, query: string) => {
+    const hits = await service.recall(session, query)
+    if (!hits.length) return '没找到相关的记忆。'
+    const lines = hits.map((hit: any) => {
+      const marker = hit.tier === 'echo' ? '（可能已经变了）' : ''
+      return `· ${hit.content}${marker}`
+    })
+    return `记得这些：\n${lines.join('\n')}`
+  })
+
+  ctx.command('记忆.整理').action(async ({ session }) => {
+    const report = await service.maintain(session)
+    return (
+      `整理完成：扫描 ${report.scanned ?? 0} 条，淡出 ${report.decayed ?? 0} 条，` +
+      `合并 ${report.merged ?? 0} 条，取代 ${report.superseded ?? 0} 条。`
+    )
+  })
+
+  ctx.command('记忆.置顶 <content>').action(async ({ session }, content: string) => {
+    const target = await service.pin(session, content)
+    if (!target) return '没找到相关的记忆。'
+    return `置顶了：${target.content}`
+  })
+
+  ctx.command('记住 <content>').action(async ({ session }, content: string) => {
+    const result = await service.remember(session, content, 'semantic', 0.9)
+    return result?.written ? '记住了。' : '没记下来（内容不重要或与已有记忆重复）。'
+  })
+
+  ctx.command('忘掉 <content>').action(async ({ session }, content: string) => {
+    const result = await service.forget(session, content)
+    return result?.ok ? `忘掉了：${result.content ?? ''}` : '没找到要忘掉的记忆。'
+  })
 }
 
 

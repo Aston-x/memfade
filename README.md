@@ -310,10 +310,21 @@ python scripts/build_plugin.py --dest G:/AI/许杏玖-MaiBot/MaiBot/plugins
 | 适配器 | 验证方式 | 覆盖 |
 |---|---|---|
 | MaiBot | **实机部署在许杏玖上**，并用宿主自己的反序列化器验证注入的 item | 全链路实机 |
-| LangBot | 装了真的 `langbot-plugin` SDK，5 项测试跑在真 SDK 上（找不到就退到本地研究目录里的 SDK 副本） | API 与注入行为 |
-| AstrBot | 装了真的 AstrBot SDK 源码，用 ast 静态核对 API 面 + 桩件测逻辑 | API 面与作用域逻辑 |
-| Koishi | 装了真的 koishi@4.18，`tsc` 类型检查 + 行为测试（会起真的 Python 侧车） | 类型与跨语言契约 |
-| NoneBot2 | 装了真的 nonebot2，4 项测试跑在真 SDK 上 | 作用域与公开 API |
+| LangBot | 装了真的 `langbot-plugin` SDK，9 项测试跑在真 SDK 上（找不到就退到本地研究目录里的 SDK 副本），含**组件清单的真 SDK 发现** | API、注入行为、组件发现、指令 |
+| AstrBot | 装了真的 AstrBot SDK 源码，用 ast 静态核对 API 面 + 桩件测逻辑 | API 面、作用域逻辑、指令 |
+| Koishi | 装了真的 koishi@4.18，`tsc` 类型检查 + 6 项行为测试（会起真的 Python 侧车） | 类型、跨语言契约、指令 |
+| NoneBot2 | 装了真的 nonebot2，测试跑在真 SDK 上 | 作用域、公开 API、指令 |
+
+**指令面在四个适配器里是齐的**：
+
+| 能力 | MaiBot | NoneBot2 | AstrBot | LangBot | Koishi |
+|---|---|---|---|---|---|
+| 查状态并列出内容 | `/记忆` | `/记忆` | `记忆 状态` | `记忆 状态` | `记忆` |
+| 检索（必须真命中） | `/记忆 搜` | `记忆 搜` | `记忆 搜` | `记忆 搜` | `记忆.搜` |
+| 整理 | `/记忆 整理` | `记忆 整理` | `记忆 整理` | `记忆 整理` | `记忆.整理` |
+| 置顶 | `/记忆 置顶` | `记忆 置顶` | `记忆 置顶` | `记忆 置顶` | `记忆.置顶` |
+| 记住 / 忘掉 | `/记住` `/忘掉` | `记住` `忘掉` | `记住` `忘掉` | `记住` `忘掉` | `记住` `忘掉` |
+| 模型主动翻记忆 | `recall_memories` 工具 | 公开 API | — | — | 侧车 `/recall` |
 
 ```bash
 pip install langbot-plugin            # LangBot 适配器测试需要
