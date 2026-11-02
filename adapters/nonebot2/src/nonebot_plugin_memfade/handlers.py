@@ -19,6 +19,9 @@ memory_observer = on_message(priority=99, block=False)
 remember_cmd = on_regex(r"^记住\s*(?P<content>.+)$")
 forget_cmd = on_regex(r"^忘掉\s*(?P<content>.+)$")
 query_cmd = on_regex(r"^记忆(?:\s+搜\s*(?P<query>.+))?$")
+maintain_cmd = on_regex(r"^记忆\s*整理$")
+pin_cmd = on_regex(r"^记忆\s*(?P<action>置顶|取消置顶)\s*(?P<query>.+)$")
+stats_cmd = on_regex(r"^记忆$")
 
 _extract_tasks: set = set()
 """后台抽取任务。抽取要等 LLM，不能让它挡住主人的回复。"""
@@ -102,6 +105,67 @@ async def _extract(pending: list, scope, key: str) -> None:
     except Exception as exc:
         logger.warning(f"[memfade] 抽取失败: {exc}")
         _buffer.setdefault(key, []).extend(pending)
+
+
+@maintain_cmd.handle()
+async def handle_maintain(matcher: Matcher, event) -> None:
+    """立刻跑一轮整理（重算淡化档位、合并重复、仲裁矛盾）。"""
+
+    report = await engine.consolidate(scope_of(event))
+    await matcher.finish(
+        "整理完成：扫描 %d 条，淡出 %d 条，合并 %d 条，取代 %d 条。"
+        % (report.scanned, report.decayed, report.merged, report.superseded)
+    )
+
+
+@pin_cmd.handle()
+async def handle_pin(matcher: Matcher, event) -> None:
+    """置顶一条记忆（此后永不淡化）。"""
+
+    action = str(matcher.get("action") or "置顶")
+    query = str(matcher.get("query") or "").strip()
+    if not query:
+        await matcher.finish("要置顶哪条？给点内容片段。")
+    scope = scope_of(event)
+    vector = await engine.embed_query(query)
+    hits = engine.recall(query, scope, top_k=5, query_vector=vector, require_match=True)
+    if not hits:
+        await matcher.finish("没找到相关的记忆。")
+    target = hits[0].memory
+    engine.pin(target.id, pinned=(action == "置顶"))
+    verb = "置顶了" if action == "置顶" else "取消置顶了"
+    await matcher.finish(f"{verb}：{target.content}")
+
+
+@stats_cmd.handle()
+async def handle_stats(matcher: Matcher, event) -> None:
+    """看看记住了多少东西——并且看得见具体内容。"""
+
+    scope = scope_of(event)
+    stats = engine.stats(scope)
+    by_status = stats.get("by_status") or {}
+    lines = [
+        "这个会话目前记住了 %d 条：活跃 %d 条，淡出中 %d 条，已成摘要 %d 条，已归档 %d 条。"
+        % (
+            stats.get("total", 0),
+            by_status.get("active", 0),
+            by_status.get("fading", 0),
+            by_status.get("gisted", 0),
+            by_status.get("archived", 0),
+        )
+    ]
+    # 光给数字不够：**得能一眼看出库里存了什么**。
+    try:
+        ids = [mid for mid, _ in engine.store.recent(scope.key(), limit=8)]
+        recent = sorted(engine.store.get_many(ids), key=lambda m: m.created_at, reverse=True)
+        if recent:
+            lines.append("最近记下的：")
+            for memory in recent:
+                marker = "" if memory.status.value == "active" else "（已淡出）"
+                lines.append("- %s%s" % (memory.content, marker))
+    except Exception:
+        pass
+    await matcher.finish("\n".join(lines))
 
 
 @remember_cmd.handle()

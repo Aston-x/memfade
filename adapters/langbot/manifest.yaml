@@ -16,6 +16,18 @@ metadata:
     zh_Hant: 記憶淡化
     ja_JP: 記憶淡化
 spec:
+  # 组件清单：LangBot 靠这里发现组件。
+  # ⚠ 少了这一段，插件能装上、能启用，但**什么都不做**——
+  # 事件监听器与指令都不会被加载。
+  components:
+    EventListener:
+      fromDirs:
+        - path: components/event_listener
+          maxDepth: 1
+    Command:
+      fromDirs:
+        - path: components/command
+          maxDepth: 1
   config:
     - name: db_path
       type: string

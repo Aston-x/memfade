@@ -35,6 +35,17 @@ __plugin_meta__ = PluginMetadata(
     # 刻意不 import nonebot.adapters.* —— 否则用户没装对应适配器就装不上插件。
 )
 
-from .core import build_context, engine, remember, recall  # noqa: E402,F401
+from .core import (  # noqa: E402,F401
+    build_context,
+    engine,
+    forget,
+    maintain,
+    recall,
+    recall_matching,
+    remember,
+    remember_all,
+    set_pinned,
+    stats,
+)
 from . import handlers  # noqa: E402,F401
 

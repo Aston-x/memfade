@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: EventListener
+metadata:
+  name: memfade_memory
+  label:
+    zh_Hans: 记忆注入与抽取
+    zh_Hant: 記憶注入與抽取
+    en_US: Memory injection and extraction
+    ja_JP: メモリ注入と抽出
+  description:
+    zh_Hans: 把召回的记忆注入提示词，这一轮结束后抽取新记忆。
+    zh_Hant: 把召回的記憶注入提示詞，這一輪結束後抽取新記憶。
+    en_US: Injects recalled memories into the prompt and extracts new ones after each turn.
+    ja_JP:  recalled memories をプロンプトに注入し、各ターン後に新しい記憶を抽出します。
+spec: {}
+execution:
+  python:
+    path: memory_injector.py
+    attr: MemFadeInjector

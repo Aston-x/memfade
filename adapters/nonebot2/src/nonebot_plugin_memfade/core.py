@@ -120,6 +120,59 @@ async def recall(event: Any, query: str = "") -> list:
     return engine.recall(query, scope, top_k=config.memfade_top_k)
 
 
+async def recall_matching(event: Any, query: str = "", *, limit: int = 5) -> list:
+    """检索记忆（必须真命中）。
+
+    和 ``recall`` 的区别：``recall`` 会带上「最近写入」的候选，
+    显式检索（用户主动搜、模型主动翻）不该混入无关记忆——
+    所以走 ``require_match=True``。
+    """
+
+    scope = scope_of(event)
+    vector = await engine.embed_query(query)
+    return engine.recall(
+        query,
+        scope,
+        top_k=max(1, min(20, int(limit or 5))),
+        query_vector=vector,
+        require_match=True,
+    )
+
+
+async def forget(event: Any, query: str = "") -> Optional[Any]:
+    """忘掉一条（按内容片段找，返回被忘掉的那条）。"""
+
+    hits = await recall_matching(event, query, limit=5)
+    if not hits:
+        return None
+    target = hits[0].memory
+    engine.forget(target.id, hard=True)
+    return target
+
+
+async def set_pinned(event: Any, query: str = "", *, pinned: bool = True) -> Optional[Any]:
+    """置顶/取消置顶（此后永不淡化）。"""
+
+    hits = await recall_matching(event, query, limit=5)
+    if not hits:
+        return None
+    target = hits[0].memory
+    engine.pin(target.id, pinned=pinned)
+    return target
+
+
+async def maintain(event: Any):
+    """跑一轮整理（重算淡化档位、合并重复、仲裁矛盾）。"""
+
+    return await engine.consolidate(scope_of(event))
+
+
+def stats(event: Any) -> dict:
+    """记忆库状态统计。"""
+
+    return engine.stats(scope_of(event))
+
+
 async def remember(event: Any, content: str, *, kind: str = "semantic", importance: float = 0.9) -> Optional[Any]:
     """显式写入记忆（太长会按标点拆成「一件事一条」）。
 

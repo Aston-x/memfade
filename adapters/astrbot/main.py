@@ -128,6 +128,146 @@ class MemFadePlugin(Star):
         except Exception as exc:
             logger.warning("[memfade] 注入失败: %s", exc)
 
+    # ------------------------------------------------------------------ #
+    # 指令
+    # ------------------------------------------------------------------ #
+
+    @filter.command_group("记忆")
+    def memory_group(self):
+        """记忆相关指令"""
+
+    @memory_group.command("状态")
+    async def memory_status(self, event: AstrMessageEvent):
+        """这个会话记住了多少东西"""
+
+        scope = self._scope_of(event)
+        stats = self.engine.stats(scope)
+        by_status = stats.get("by_status") or {}
+        lines = [
+            "这个会话目前记住了 %d 条：活跃 %d 条，淡出中 %d 条，已成摘要 %d 条，已归档 %d 条。"
+            % (
+                stats.get("total", 0),
+                by_status.get("active", 0),
+                by_status.get("fading", 0),
+                by_status.get("gisted", 0),
+                by_status.get("archived", 0),
+            )
+        ]
+        # 光给数字不够：**得能一眼看出库里存了什么**。
+        try:
+            ids = [mid for mid, _ in self.engine.store.recent(scope.key(), limit=8)]
+            recent = sorted(
+                self.engine.store.get_many(ids), key=lambda m: m.created_at, reverse=True
+            )
+            if recent:
+                lines.append("最近记下的：")
+                for memory in recent:
+                    marker = "" if memory.status.value == "active" else "（已淡出）"
+                    lines.append("- %s%s" % (memory.content, marker))
+        except Exception:
+            pass
+        yield event.plain_result("\n".join(lines))
+
+    @memory_group.command("搜")
+    async def memory_search(self, event: AstrMessageEvent, query: str = ""):
+        """检索记忆（必须真命中）"""
+
+        text = (query or "").strip()
+        if not text:
+            yield event.plain_result("要搜什么？用法：记忆 搜 <关键词>")
+            return
+        scope = self._scope_of(event)
+        vector = await self.engine.embed_query(text)
+        hits = self.engine.recall(
+            text, scope, top_k=8, query_vector=vector, require_match=True
+        )
+        if not hits:
+            yield event.plain_result("没找到相关的记忆。")
+            return
+        lines = []
+        for hit in hits:
+            marker = "（可能已经变了）" if hit.tier == "echo" else ""
+            lines.append("· %s%s" % (hit.memory.content, marker))
+        yield event.plain_result("记得这些：\n" + "\n".join(lines))
+
+    @memory_group.command("整理")
+    async def memory_maintain(self, event: AstrMessageEvent):
+        """立刻跑一轮整理"""
+
+        report = await self.engine.consolidate(self._scope_of(event))
+        yield event.plain_result(
+            "整理完成：扫描 %d 条，淡出 %d 条，合并 %d 条，取代 %d 条。"
+            % (report.scanned, report.decayed, report.merged, report.superseded)
+        )
+
+    @memory_group.command("置顶")
+    async def memory_pin(self, event: AstrMessageEvent, query: str = ""):
+        """让一条记忆永不淡化"""
+
+        text = (query or "").strip()
+        if not text:
+            yield event.plain_result("要置顶哪条？给点内容片段。")
+            return
+        scope = self._scope_of(event)
+        vector = await self.engine.embed_query(text)
+        hits = self.engine.recall(
+            text, scope, top_k=5, query_vector=vector, require_match=True
+        )
+        if not hits:
+            yield event.plain_result("没找到相关的记忆。")
+            return
+        target = hits[0].memory
+        self.engine.pin(target.id, pinned=True)
+        yield event.plain_result("置顶了：%s" % target.content)
+
+    @filter.command("记住")
+    async def cmd_remember(self, event: AstrMessageEvent, content: str = ""):
+        """显式记住一件事"""
+
+        text = (content or "").strip()
+        if not text:
+            yield event.plain_result("要记住什么呢？用法：记住 <内容>")
+            return
+        from memfade.types import MemoryDraft, MemoryKind
+
+        scope = self._scope_of(event)
+        written = self.engine.remember_atomic(
+            MemoryDraft(content=text, kind=MemoryKind.SEMANTIC, importance=0.9, source="astrbot"),
+            scope,
+        )
+        if not written:
+            yield event.plain_result("没记下来（内容不重要或与已有记忆重复）")
+            return
+        await self.engine.embed_memories(written)
+        if len(written) == 1:
+            yield event.plain_result("记住了：%s" % written[0].content)
+        else:
+            yield event.plain_result(
+                "记住了这 %d 件事：\n%s"
+                % (len(written), "\n".join("- " + m.content for m in written))
+            )
+
+    @filter.command("忘掉")
+    async def cmd_forget(self, event: AstrMessageEvent, content: str = ""):
+        """忘掉一条记忆"""
+
+        text = (content or "").strip()
+        if not text:
+            yield event.plain_result("要忘掉什么？用法：忘掉 <内容片段>")
+            return
+        scope = self._scope_of(event)
+        # 忘掉是破坏性操作：必须真的匹配上，不能误删「最近写入」的那条。
+        vector = await self.engine.embed_query(text)
+        hits = self.engine.recall(
+            text, scope, top_k=5, query_vector=vector, require_match=True
+        )
+        if not hits:
+            yield event.plain_result("没找到要忘掉的记忆。")
+            return
+        target = hits[0].memory
+        self.engine.forget(target.id, hard=True)
+        yield event.plain_result("忘掉了：%s" % target.content)
+
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, ctx: Any = None) -> None:
         """这一轮结束后抽取记忆。"""

@@ -153,6 +153,24 @@ def _install_stubs() -> None:
 
         return decorator
 
+    class _CommandGroup:
+        """指令组（真 SDK 里 ``@filter.command_group("记忆")`` 返回的就是它）。"""
+
+        def __init__(self, func):
+            self.func = func
+
+        def command(self, *args, **kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
+    def _command_group(*args, **kwargs):
+        def decorator(func):
+            return _CommandGroup(func)
+
+        return decorator
+
     class Plain:
         pass
 
@@ -176,6 +194,8 @@ def _install_stubs() -> None:
     event.AstrMessageEvent = AstrMessageEvent
     filter_mod.on_llm_request = _filter_decorator
     filter_mod.on_llm_response = _filter_decorator
+    filter_mod.command = _filter_decorator
+    filter_mod.command_group = _command_group
     filter_mod.EventMessageType = object
     components.Plain = Plain
     astrbot.api = api
@@ -225,7 +245,63 @@ class TestAstrBotAdapterLogic(unittest.IsolatedAsyncioTestCase):
         event.get_group_id = lambda: group_id
         event.get_sender_id = lambda: sender_id
         event.get_session_id = lambda: "sess-1"
+        # 指令要往会话里回话（真 SDK 里是 yield event.plain_result(...)）
+        event.plain_result = lambda text: ("result", text)
         return event
+
+    async def test_memory_status_command_lists_what_is_stored(self):
+        """「记忆 状态」不能只给数字——得让人看得见库里存了什么。"""
+
+        from memfade.types import MemoryDraft, MemoryKind
+
+        scope = self.plugin._scope_of(self._event("你好"))
+        self.engine.remember(
+            MemoryDraft(
+                content="季怡喜欢辣的食物",
+                kind=MemoryKind.PREFERENCE,
+                importance=0.8,
+                subject="季怡",
+                predicate="喜欢",
+                object="辣的食物",
+            ),
+            scope,
+        )
+        text = await self._collect(self.plugin.memory_status(self._event("记忆 状态")))
+        self.assertIn("记住了", text)
+        self.assertIn("季怡喜欢辣的食物", text)
+
+    async def test_memory_search_command_requires_a_match(self):
+        """显式检索必须真命中——不把「最近写入」但无关的记忆混进来。"""
+
+        from memfade.types import MemoryDraft, MemoryKind
+
+        scope = self.plugin._scope_of(self._event("你好"))
+        self.engine.remember(
+            MemoryDraft(
+                content="季怡喜欢辣的食物",
+                kind=MemoryKind.PREFERENCE,
+                importance=0.8,
+                subject="季怡",
+                predicate="喜欢",
+                object="辣的食物",
+            ),
+            scope,
+        )
+        hit = await self._collect(self.plugin.memory_search(self._event("记忆 搜 辣"), "辣"))
+        self.assertIn("辣的食物", hit)
+        miss = await self._collect(
+            self.plugin.memory_search(self._event("记忆 搜 显卡驱动"), "显卡驱动")
+        )
+        self.assertIn("没找到", miss)
+
+    @staticmethod
+    async def _collect(agen) -> str:
+        """把 async generator 的产出收成一段文本（AstrBot 的指令是 yield 的）。"""
+
+        parts = []
+        async for item in agen:
+            parts.append(item[1] if isinstance(item, tuple) else str(item))
+        return "\n".join(parts)
 
     def test_scope_uses_group_when_present(self):
         event = self._event("你好", group_id="1127155154")
