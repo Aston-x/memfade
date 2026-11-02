@@ -1046,7 +1046,8 @@ class MemFadePlugin(MaiBotPlugin):
         # 面板的检索框永远搜不出东西。默认看记忆最多的那个会话。
         chat_id = self._busiest_scope_id(engine) or "webui"
         scope = Scope(platform="qq", chat_type="session", chat_id=chat_id)
-        vector = await engine.embed_query(query) if query else None
+        # 面板的调用预算是 11 秒，这里可以多等一会儿取向量
+        vector = await engine.embed_query(query, timeout=8.0) if query else None
         hits = engine.recall(
             query,
             scope,
@@ -1081,7 +1082,7 @@ class MemFadePlugin(MaiBotPlugin):
         if engine is None:
             return {"results": []}
         scope = Scope(platform="qq", chat_type="private", chat_id="webui")
-        vector = await engine.embed_query(query) if query else None
+        vector = await engine.embed_query(query, timeout=8.0) if query else None
         hits = engine.recall(
             query,
             scope,
@@ -1297,7 +1298,7 @@ class MemFadePlugin(MaiBotPlugin):
         try:
             # 向量要在这里算：宿主的面板是异步的，
             # 引擎内部的同步取向量在事件循环里会直接放弃（不阻塞事件循环）。
-            vector = await engine.embed_query(query) if query else None
+            vector = await engine.embed_query(query, timeout=8.0) if query else None
             rows = engine.explain(
                 query, scope, top_k=max(1, min(20, int(limit))), query_vector=vector
             )

@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import replace
 from typing import Any, Iterable, Optional, Sequence
@@ -553,13 +554,25 @@ class MemoryEngine:
         except Exception:
             return None
 
-    async def embed_query(self, text: str) -> Optional[list[float]]:
-        """异步取查询向量。适配器在召回前调用它。"""
+    async def embed_query(self, text: str, *, timeout: Optional[float] = 2.5) -> Optional[list[float]]:
+        """异步取查询向量。适配器在召回前调用它。
+
+        ⚠ **默认只给 2.5 秒**。取向量是网络调用（宿主那边可能是
+        百炼的 API），而召回在**热路径**上——注入钩子 await 它，
+        服务一慢，机器人的回复就跟着慢（实测 embedding 服务挂掉时
+        一次调用能卡 60 秒）。
+
+        超时就当没有向量：词面通道照样能用，少一路混合召回而已。
+        """
 
         if self._embed_one is None:
             return None
         try:
+            if timeout and timeout > 0:
+                return await asyncio.wait_for(self._embed_one(text), timeout=timeout)
             return await self._embed_one(text)
+        except asyncio.TimeoutError:
+            return None
         except Exception:
             return None
     def effective_strength(self, memory: Memory, now: Optional[float] = None) -> float:
