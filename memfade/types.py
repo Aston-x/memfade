@@ -154,6 +154,10 @@ class Memory:
             "summary": self.summary,
             "importance": round(self.importance, 4),
             "strength": round(self.strength, 4),
+            # ⚠ 锚点必须一起导出：它是淡化曲线的起点，
+            # 丢了它，导出的记忆导回来会「重新变年轻」，
+            # 该淡的又淡一遍——主人会看到机器人把旧事又提一遍。
+            "anchor_at": self.anchor_at,
             "status": self.status.value,
             "created_at": self.created_at,
             "updated_at": self.updated_at,

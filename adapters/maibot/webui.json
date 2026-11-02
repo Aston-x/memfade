@@ -62,6 +62,20 @@
             }
           }
         },
+        "import": {
+          "api": "memfade_import",
+          "version": "1",
+          "parameters": {
+            "payload": {
+              "type": "string",
+              "max_length": 60000
+            },
+            "scope_id": {
+              "type": "string",
+              "max_length": 64
+            }
+          }
+        },
         "why": {
           "api": "memfade_why",
           "version": "1",

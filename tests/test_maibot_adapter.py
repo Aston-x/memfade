@@ -310,6 +310,17 @@ class FakeCtx:
         self.llm = FakeLLM(llm_reply)
         self.maisaka = FakeMaisaka()
         self.send = FakeSend()
+        self.config = FakeConfig()
+
+
+class FakeConfig:
+    """假配置能力（宿主只给读接口，插件改不了宿主配置）。"""
+
+    def __init__(self, values: Dict[str, Any] | None = None):
+        self.values = dict(values or {})
+
+    async def get(self, key: str, default: Any = None) -> Any:
+        return self.values.get(key, default)
 
 
 class FakeSend:
@@ -496,6 +507,32 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         await plugin._drain_extractions()
         result = await plugin.tool_recall(query="显卡驱动", limit=5, stream_id="sess-1")
         self.assertIn("没有相关的记录", result["content"])
+
+    async def test_takeover_command_reports_conflicts(self):
+        """「/记忆 接管」要能看出宿主还有没有别的记忆系统在跑。"""
+
+        plugin = self.plugin
+        plugin._ctx.config.values = {
+            "a_memorix.integration.enable_memory_query_tool": True,
+            "a_memorix.integration.person_fact_writeback_enabled": True,
+        }
+        await plugin.cmd_memory(
+            stream_id="sess-1", matched_groups={"action": "接管"}
+        )
+        sent = " ".join(text for text, _ in plugin._ctx.send.sent)
+        self.assertIn("旧的长期记忆系统", sent)
+        self.assertIn("enable_memory_query_tool", sent)
+        self.assertIn("retire_legacy_memory.py", sent, "没给出退场办法")
+
+    async def test_takeover_command_reports_clean_state(self):
+        """没有冲突时要说清楚「记忆只走 memfade 这一条路」。"""
+
+        plugin = self.plugin
+        await plugin.cmd_memory(
+            stream_id="sess-1", matched_groups={"action": "接管"}
+        )
+        sent = " ".join(text for text, _ in plugin._ctx.send.sent)
+        self.assertIn("没有别的长期记忆系统", sent)
 
     async def test_extraction_does_not_block_the_reply(self):
         """抽取要等 LLM（实机 30~60 秒），不能挡住主人的回复。

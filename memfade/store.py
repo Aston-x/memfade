@@ -17,7 +17,7 @@ import sqlite3
 import struct
 import threading
 import time
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Dict, Iterable, Optional, Sequence
 
 from .types import Memory, MemoryKind, MemoryStatus
 
@@ -81,6 +81,35 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
     INSERT INTO memories_fts(mem_id, tokens) VALUES (new.id, new.fts_tokens);
 END;
 """
+
+# 存储层 schema 版本。升级时靠它决定要不要跑迁移。
+#
+# 为什么需要：插件是**装到别人机器上**的——
+# 老版本建出来的库必须能直接被新版本打开，
+# 不能因为多了一列就 INSERT 报错、插件起不来。
+SCHEMA_VERSION = 2
+
+
+def _declared_columns() -> Dict[str, str]:
+    """从建表语句里解析出「列名 → 类型」，供迁移比对。"""
+
+    import re
+
+    body = _SCHEMA.split("CREATE TABLE IF NOT EXISTS memories (", 1)[-1]
+    body = body.split(")", 1)[0]
+    columns: Dict[str, str] = {}
+    for line in body.splitlines():
+        line = line.strip().rstrip(",")
+        if not line or line.startswith("--"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        name = parts[0]
+        if name.upper() in ("PRIMARY", "UNIQUE", "FOREIGN", "CHECK"):
+            continue
+        columns[name] = parts[1].upper()
+    return columns
 
 
 def _row_to_memory(row: sqlite3.Row) -> Memory:
@@ -283,7 +312,36 @@ class MemoryStore:
                 # 环境不支持 FTS5：降级为无全文索引模式，其余功能不受影响。
                 schema = _SCHEMA.split("CREATE VIRTUAL TABLE")[0]
                 self._conn.executescript(schema)
+            self._migrate_columns()
+            self._conn.execute("PRAGMA user_version = %d" % SCHEMA_VERSION)
             self._conn.commit()
+
+    def _migrate_columns(self) -> None:
+        """给老库补上缺列。
+
+        ``CREATE TABLE IF NOT EXISTS`` 只会建新表，**不会给已有的表加列**——
+        插件升级后新代码往老库里写新列，直接就报
+        "table memories has no column named xxx"，插件直接起不来。
+        所以这里比对建表语句与实际表结构，缺哪列补哪列。
+        """
+
+        try:
+            rows = self._conn.execute("PRAGMA table_info(memories)").fetchall()
+        except sqlite3.Error:
+            return
+        existing = {str(row[1]) for row in rows}
+        if not existing:
+            return
+        for name, sql_type in _declared_columns().items():
+            if name in existing:
+                continue
+            try:
+                self._conn.execute(
+                    'ALTER TABLE memories ADD COLUMN "%s" %s' % (name, sql_type)
+                )
+            except sqlite3.Error:
+                # 已经有默认值/非空约束的列加不了——那就让调用方按老结构跑
+                pass
 
     @property
     def has_fts(self) -> bool:

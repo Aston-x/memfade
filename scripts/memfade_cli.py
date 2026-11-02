@@ -115,6 +115,33 @@ def cmd_fade(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import(args: argparse.Namespace) -> int:
+    """把导出的 JSON 导回记忆库（换机器、换机器人、迁移旧库）。"""
+
+    with open(args.file, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if isinstance(payload, dict):
+        items = payload.get("memories") or payload.get("rows") or []
+    elif isinstance(payload, list):
+        items = payload
+    else:
+        items = []
+    engine = _engine(args.db)
+    try:
+        scope = None
+        if args.scope:
+            scope = Scope(platform="qq", chat_type="session", chat_id=args.scope)
+        written = engine.import_memories(items, scope)
+    finally:
+        engine.close()
+    print("导入 %d 条（读入 %d 条）" % (len(written), len(items)))
+    for memory in written[:10]:
+        print("  · [%s] %s" % (memory.kind.value, memory.content[:60]))
+    if len(written) > 10:
+        print("  … 还有 %d 条" % (len(written) - 10))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="memfade 命令行工具")
     parser.add_argument("--db", default="memfade.db", help="memfade.db 路径")
@@ -137,6 +164,11 @@ def main() -> int:
     search.set_defaults(func=cmd_search)
 
     sub.add_parser("fade", help="跑一轮整理（淡化/合并/仲裁）").set_defaults(func=cmd_fade)
+
+    importer = sub.add_parser("import", help="导入记忆（导出的 JSON）")
+    importer.add_argument("--file", required=True, help="JSON 文件路径")
+    importer.add_argument("--scope", default="", help="导到哪个作用域（留空=用文件里的）")
+    importer.set_defaults(func=cmd_import)
 
     args = parser.parse_args()
     return args.func(args)

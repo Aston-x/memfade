@@ -39,6 +39,19 @@ DEPLOYABLE = {
 }
 IGNORED = {"__pycache__", ".pytest_cache", ".mypy_cache"}
 
+# 随插件一起发货的运维工具。
+#
+# 为什么：**插件要能独立用**。装上它的人需要的是
+# 「备份我的记忆」「把旧记忆系统退场」「体检」「清理」——
+# 这些工具必须跟着插件走，而不是留在开发者的仓库里。
+OPERATOR_TOOLS = (
+    "backup_memory_stack.py",
+    "retire_legacy_memory.py",
+    "clean_library.py",
+    "audit_db.py",
+    "verify_against_chat.py",
+)
+
 
 def sync_core(target: Path) -> None:
     """把核心包复制到适配器目录。"""
@@ -48,6 +61,26 @@ def sync_core(target: Path) -> None:
         shutil.rmtree(dst)
     shutil.copytree(CORE_DIR, dst, ignore=shutil.ignore_patterns(*IGNORED, "*.pyc"))
     print(f"[build] 核心已同步到 {dst}")
+
+
+def sync_tools(target: Path) -> None:
+    """把运维工具复制进适配器目录的 tools/ 下。"""
+
+    # ⚠ 目录名带前缀：宿主会把插件目录放进 sys.path，
+    # 一个叫 `tools` 的目录可能和别人的同名包打架。
+    dst = target / "memfade_tools"
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for name in OPERATOR_TOOLS:
+        src = REPO_ROOT / "scripts" / name
+        if not src.exists():
+            continue
+        shutil.copy2(src, dst / name)
+        copied += 1
+    if copied:
+        print(f"[build] 运维工具已同步到 {dst}（{copied} 个）")
 
 
 def deploy(target: Path, plugins_dir: Path) -> Path:
@@ -108,6 +141,7 @@ def main() -> int:
 
     for name, target in ADAPTERS.items():
         sync_core(target)
+        sync_tools(target)
     for name, target in DEPLOYABLE.items():
         if args.zip:
             make_zip(target, REPO_ROOT / "dist")

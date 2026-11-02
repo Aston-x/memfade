@@ -460,6 +460,87 @@ class MemoryEngine:
 
         return export_memories(self.store, scope.key() if scope else None)
 
+    def import_memories(
+        self,
+        items: Sequence[dict[str, Any]],
+        scope: Optional[Scope] = None,
+        *,
+        now: Optional[float] = None,
+        skip_duplicates: bool = True,
+    ) -> list[Memory]:
+        """导入一批记忆（导出的 JSON、别的机器上的库、旧系统的迁移结果）。
+
+        为什么插件要自带导入：
+        **记忆是用户的数据**，换机器、换机器人、换框架都得能带走。
+        只有导出没有导入，等于「只能看不能搬」。
+
+        导入时保留：种类、显著性、三元组、强度、锚点、状态、来源。
+        （强度与锚点是淡化状态——不保留的话，导入进来的记忆会
+        「重新变年轻」，该淡的又淡一遍。）
+        不保留 id（本地重新分配）。
+        """
+
+        from .textutil import fts_text, normalized_hash
+
+        ts = float(now if now is not None else time.time())
+        written: list[Memory] = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "").strip()
+            if not content:
+                continue
+            target_scope = scope
+            if target_scope is None:
+                raw_scope = str(item.get("scope_key") or "").strip()
+                if not raw_scope:
+                    continue
+                target_scope = Scope(
+                    platform="qq",
+                    chat_type="session",
+                    chat_id=raw_scope.split(":")[-1] if ":" in raw_scope else raw_scope,
+                    cross_scope=bool(item.get("cross_scope", False)),
+                )
+            try:
+                kind = MemoryKind(str(item.get("kind") or "semantic").lower())
+            except ValueError:
+                kind = MemoryKind.SEMANTIC
+            try:
+                status = MemoryStatus(str(item.get("status") or "active").lower())
+            except ValueError:
+                status = MemoryStatus.ACTIVE
+            if skip_duplicates and self.store.find_by_hash(
+                normalized_hash(content), target_scope.key()
+            ):
+                continue
+            created = float(item.get("created_at") or ts)
+            anchor = float(item.get("anchor_at") or created)
+            memory = Memory(
+                id=0,
+                scope_key=target_scope.key(),
+                kind=kind,
+                content=content,
+                summary=str(item.get("summary") or ""),
+                importance=max(0.0, min(1.0, float(item.get("importance") or 0.5))),
+                strength=max(0.0, min(1.0, float(item.get("strength") or 1.0))),
+                anchor_at=anchor,
+                status=status,
+                created_at=created,
+                updated_at=float(item.get("updated_at") or created),
+                last_recalled_at=item.get("last_recalled_at"),
+                recall_count=int(item.get("recall_count") or 0),
+                pinned=bool(item.get("pinned", False)),
+                cross_scope=bool(item.get("cross_scope", False)),
+                subject=str(item.get("subject") or ""),
+                predicate=str(item.get("predicate") or ""),
+                object=str(item.get("object") or ""),
+                source=str(item.get("source") or "import"),
+                meta=dict(item.get("meta") or {}),
+            )
+            memory.id = self.store.add(memory, fts_tokens=fts_text(memory.content))
+            written.append(memory)
+        return written
+
     def reinforce(self, memory_ids: Iterable[int], *, now: Optional[float] = None) -> int:
         """强化一批记忆。带冷却期，避免正反馈刷分。"""
 

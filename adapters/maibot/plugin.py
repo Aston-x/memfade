@@ -309,6 +309,7 @@ class MemFadePlugin(MaiBotPlugin):
         """插件加载：建引擎、起整理任务。"""
 
         self._rebuild_engine()
+        await self._check_competing_memory()
         self._load_buffer()
         self._maintain_task = asyncio.create_task(self._maintenance_loop())
 
@@ -332,6 +333,45 @@ class MemFadePlugin(MaiBotPlugin):
         if self._engine is not None:
             self._engine.close()
             self._engine = None
+
+    async def _check_competing_memory(self) -> None:
+        """检查宿主是否还挂着另一套长期记忆系统。
+
+        **两套记忆并行会出三件事**：
+        1. 旧的自动写回「人物事实」与「聊天摘要」，新的也抽取事实——
+            同一个人的同一件事，两个库各存一份；
+        2. 旧的**没有淡化引擎**（段落写进去就赖着不走），
+            这正是「总提旧事」的根源；
+        3. 模型手里还有旧的检索工具，能从旧库捞回已经作废的事实。
+
+        插件不能改宿主的配置（SDK 只给读接口），
+        所以这里**把冲突点出来**并给出退场步骤——
+        让人来决定，而不是悄悄改别人的配置。
+        """
+
+        probes = (
+            ("a_memorix.integration.enable_memory_query_tool", "模型还能检索旧记忆库"),
+            ("a_memorix.integration.person_fact_writeback_enabled", "旧系统会自动抽取人物事实"),
+            ("a_memorix.integration.chat_summary_writeback_enabled", "旧系统会自动写回聊天摘要"),
+            ("a_memorix.integration.enable_person_profile_injection", "旧画像会注入对话"),
+            ("a_memorix.integration.heuristic_memory_recall_enabled", "旧系统会「自然拉起」旧记忆"),
+        )
+        conflicts = []
+        for key, why in probes:
+            try:
+                value = await self.ctx.config.get(key, False)
+            except Exception:
+                continue
+            if value:
+                conflicts.append((key, why))
+        if not conflicts:
+            return
+        self.ctx.logger.warning(
+            "[memfade] 宿主还有另一套长期记忆系统在跑：%s。"
+            "两套并行会互相污染（旧的没有淡化引擎，模型还能从旧库检索）。"
+            "退场步骤见插件目录的 tools/retire_legacy_memory.py。",
+            "、".join("%s（%s）" % (k, w) for k, w in conflicts),
+        )
 
     async def _maintenance_loop(self) -> None:
         """后台循环：空闲冲刷 + 定期整理。
@@ -1075,8 +1115,9 @@ class MemFadePlugin(MaiBotPlugin):
     @Command(
         "记忆",
         description="查看记忆。/记忆 查当前会话记住的东西，/记忆 搜 <关键词>，"
-        "/记忆 整理 立刻跑一轮整理，/记忆 置顶 <内容> 让它永不淡化",
-        pattern=r"^/(?:记忆|memory)(?:\s+(?P<action>搜|search|整理|maintain|置顶|pin|取消置顶|unpin)?)?"
+        "/记忆 整理 立刻跑一轮整理，/记忆 置顶 <内容> 让它永不淡化，"
+        "/记忆 接管 看看记忆板块归谁管",
+        pattern=r"^/(?:记忆|memory)(?:\s+(?P<action>搜|search|整理|maintain|置顶|pin|取消置顶|unpin|接管|takeover|体检|check)?)?"
         r"(?:\s+(?P<query>.+))?$",
     )
     async def cmd_memory(self, **kwargs: Any) -> tuple:
@@ -1100,6 +1141,39 @@ class MemFadePlugin(MaiBotPlugin):
                 stream_id,
             )
             return True, "整理完成", 0
+
+        if action in ("接管", "takeover", "体检", "check"):
+            # 「接管」= 让 memfade 当唯一的长期记忆板块。
+            # 插件不能改宿主配置（SDK 只给读接口），
+            # 所以这里给的是**现状 + 要改哪几行**。
+            lines = ["记忆板块现状：", "· memfade（本插件）：长期记忆的主板，已就绪"]
+            conflicts = []
+            probes = (
+                ("a_memorix.integration.enable_memory_query_tool", "模型能检索旧记忆库"),
+                ("a_memorix.integration.person_fact_writeback_enabled", "旧系统自动抽取人物事实"),
+                ("a_memorix.integration.chat_summary_writeback_enabled", "旧系统自动写回聊天摘要"),
+                ("a_memorix.integration.enable_person_profile_injection", "旧画像注入对话"),
+                ("a_memorix.integration.heuristic_memory_recall_enabled", "旧系统「自然拉起」旧记忆"),
+            )
+            for key, why in probes:
+                try:
+                    value = await self.ctx.config.get(key, False)
+                except Exception:
+                    continue
+                if value:
+                    conflicts.append((key, why))
+            if conflicts:
+                lines.append("· 宿主还有一套旧的长期记忆系统在跑：")
+                for key, why in conflicts:
+                    lines.append("    - %s（%s）" % (key, why))
+                lines.append(
+                    "  退场：把上面几项改成 false，"
+                    "并跑插件目录的 tools/retire_legacy_memory.py 清掉旧数据。"
+                )
+            else:
+                lines.append("· 宿主没有别的长期记忆系统在跑 —— 记忆只走 memfade 这条路。")
+            await self.ctx.send.text("\n".join(lines), stream_id)
+            return True, "已返回记忆板块现状", 0
 
         if action in ("搜", "search"):
             # 显式检索必须真的命中：「搜」是用户在找东西，
@@ -1719,6 +1793,47 @@ class MemFadePlugin(MaiBotPlugin):
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "count": len(rows), "memories": rows[: max(1, min(20000, int(limit)))]}
+
+    @API("memfade_import", description="导入记忆（JSON：导出文件 / 别的机器的库）", version="1")
+    async def memfade_import(self, payload: str = "", scope_id: str = "") -> Dict[str, Any]:
+        """导入一批记忆。
+
+        **记忆是用户的数据**——换机器、换机器人、换框架都得能带走。
+        只有导出没有导入，等于「只能看不能搬」。
+        """
+
+        engine = self._engine
+        if engine is None:
+            return {"ok": False, "error": "引擎未就绪"}
+        text = (payload or "").strip()
+        if not text:
+            return {"ok": False, "error": "没有内容可导入"}
+        try:
+            data = json.loads(text)
+        except Exception as exc:
+            return {"ok": False, "error": "不是合法 JSON：%s" % exc}
+        if isinstance(data, dict):
+            items = data.get("memories") or data.get("rows") or []
+        elif isinstance(data, list):
+            items = data
+        else:
+            items = []
+        if not items:
+            return {"ok": False, "error": "JSON 里没有记忆条目"}
+        try:
+            scope = None
+            target = (scope_id or "").strip()
+            if target:
+                scope = Scope(platform="qq", chat_type="session", chat_id=target)
+            written = engine.import_memories(items, scope)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        return {
+            "ok": True,
+            "written": len(written),
+            "skipped": len(items) - len(written),
+            "sample": [m.content for m in written[:5]],
+        }
 
     def _busiest_scope_id(self, engine) -> str:
         """找记忆最多的那个会话——面板默认看它。"""
