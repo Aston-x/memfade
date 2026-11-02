@@ -63,6 +63,8 @@ class MemoryEngine:
         self.retriever = MemoryRetriever(self.store, self.config, self.policy)
         self._embed_one = make_embedder(embedder) if self.config.storage.enable_vector else None
         self.consolidator = ConsolidationService(self.store, self.config, self.policy, self.extractor)
+        self.last_dropped: list[tuple[str, str]] = []
+        """上一次抽取里被「主语纪律」丢掉的候选：(内容, 原因)。"""
 
     def _build_policy(self) -> FadePolicy:
         """按配置构造淡化策略。"""
@@ -236,6 +238,9 @@ class MemoryEngine:
         """
 
         result = await self.extractor.extract(messages, source=source)
+        # 被「主语纪律」丢掉的候选：留着给宿主打日志，
+        # 不然「为什么这条没记下来」永远是黑箱。
+        self.last_dropped = list(result.dropped)
         if not result.drafts:
             return []
         # 记下出处：模型不会填 source（提示词里没这项），

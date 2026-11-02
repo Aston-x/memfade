@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Optional, Sequence
 
 from .config import ExtractionConfig
@@ -32,7 +32,8 @@ from .types import MemoryDraft, MemoryKind
 EXTRACTION_SYSTEM_PROMPT = (
     "你是一个聊天机器人的长期记忆抽取器。\n"
     "\n"
-    "从对话中挑出对未来聊天仍然有用的信息，输出 JSON 数组。不要输出任何解释文字。\n"
+    "从对话中挑出**关于对话里那个人**、对未来聊天仍然有用的信息，"
+    "输出 JSON 数组。不要输出任何解释文字。\n"
     "\n"
     "每条记忆的字段：\n"
     "- content: 一句完整、自洽的中文陈述（主语明确，不要写「他说」这种指代不明的话）\n"
@@ -41,27 +42,39 @@ EXTRACTION_SYSTEM_PROMPT = (
     "- importance: 0~1 的小数。稳定事实 0.6~0.9；一次性事件 0.2~0.45；"
     "用户强调的 0.9 以上\n"
     "- subject / predicate / object: 把事实拆成三段，**必须填**。\n"
-    "  subject 是「谁」（许杏玖 / 季怡），predicate 是「怎么样」（住在 / 喜欢 / 参加），\n"
+    "  subject 是「谁」@SUBJECT_HINT@，predicate 是「怎么样」（住在 / 喜欢 / 参加），\n"
     "  object 是「什么」（上海 / 辣的食物 / 第18届蓝桥杯）。\n"
     "  这三段是矛盾检测的唯一依据——「他住在北京」后来变成「他住在上海」，\n"
     "  靠它们才能发现旧值该退场。填不上就说明这条不值得记。\n"
     "- cross_scope: 只有当用户明确要求「记住这个 / 永远别忘」时才为 true，否则一律 false\n"
     "\n"
     "硬性要求：\n"
-    "1. 只抽值得记的信息。寒暄、表情、闲聊一律不抽。\n"
-    "2. **一条记忆只讲一件事**，30 字以内。\n"
+    "1. 只抽**用户本人**的事。以下一律不抽：\n"
+    "   - 机器人（对方）自己的事——它看过什么、说过什么、收藏了什么，\n"
+    "     那是它的人设，不是用户的记忆；\n"
+    "   - 群里的公共信息、转发出来的公告、别人发的东西；\n"
+    "   - 作品设定、剧情、赛事规则、播出时间、游戏机制这类公共知识。\n"
+    "2. 引用、转发、复述里的内容不是用户的话，别记。"
+    "「我把你那句总结存下来了」里的正文是别人写的。\n"
+    "3. 用户否认、纠正、反问、收回的话不要记。"
+    "「不是我看的是你看」只说明是个误会，别把它记成事实。\n"
+    "4. 用户只是寒暄、提问、开玩笑、试探（问「你是谁」「你会骂人」这种）时，"
+    "一条都不要抽，输出 []。\n"
+    "5. **一条记忆只讲一件事**，30 字以内。\n"
     "   同一段话里有多件事就拆成多条分别输出。\n"
     "   反例（错）：「季怡在备赛蓝桥杯：报名只报名不缴费，先校赛再定省赛，"
     "10月16日有大纲解析直播」\n"
     "   正例（对）：「季怡参加蓝桥杯只报名不缴费」\n"
-    "3. 一次性事件（临时状态、刚发生的小事、上次买了什么）可以抽，"
+    "6. 一次性事件（临时状态、刚发生的小事、上次买了什么）可以抽，"
     "但必须标记为 episodic 且 importance 不超过 0.45。\n"
-    "4. 同一件事只写一条，不要换措辞重复。\n"
-    "5. 绝不记录密码、密钥、身份证号、银行卡号、验证码等敏感信息。\n"
-    "6. 不确定就不抽。宁可少抽，不要抽错。\n"
-    "7. 输出格式示例："
-    '[{{"content":"许杏玖喜欢辣的食物","kind":"semantic","importance":0.8,'
-    '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}}]'
+    "7. 同一件事只写一条，不要换措辞重复。\n"
+    "8. 主语必须是**人**：用对话里出现过的名字，"
+    "不要用「用户」「对方」「他」「她」，也不要拿作品名、节目名、赛事名当主语。\n"
+    "9. 绝不记录密码、密钥、身份证号、银行卡号、验证码等敏感信息。\n"
+    "10. 不确定就不抽。宁可少抽，不要抽错。\n"
+    "11. 输出格式示例："
+    '[{{"content":"季怡喜欢辣的食物","kind":"semantic","importance":0.8,'
+    '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}}]'
 )
 
 
@@ -74,9 +87,164 @@ EXTRACTION_USER_TEMPLATE = (
 )
 
 
+def build_extraction_prompt(config: Optional["ExtractionConfig"] = None) -> str:
+    """按配置拼抽取提示词。
+
+    核心库不绑定任何人名：这次对话里有谁，由部署方通过
+    ``subject_hint`` 填进来（形如「（许杏玖 / 季怡）」）。
+    """
+
+    hint = ""
+    if config is not None and config.subject_hint:
+        hint = config.subject_hint.strip()
+    # 用 @...@ 而不是 {...}：提示词常量里出现字面花括号会让 .format() 崩，
+    # 「所有提示词都能被 format」是仓库里的一条守卫测试。
+    return EXTRACTION_SYSTEM_PROMPT.replace("@SUBJECT_HINT@", hint)
+
+
+# 泛指词：主语写成这些，说明模型没真的认出「是谁」，
+# 这条记忆没法做矛盾检测（subject 是空的或泛的），
+# 也不能拿来生成画像——一律不算数。
+GENERIC_SUBJECTS = frozenset(
+    {
+        "用户",
+        "对方",
+        "他",
+        "她",
+        "它",
+        "我",
+        "你",
+        "我们",
+        "你们",
+        "他们",
+        "咱",
+        "本人",
+        "自己",
+        "人家",
+    }
+)
+
+# 常见的「人」称身份词。这些不是说话人，但也确实是人，
+# 主语是它们时该保留（「季怡的妈妈叫小红」这种关系）。
+PERSON_ROLES = frozenset(
+    {
+        "妈妈",
+        "爸爸",
+        "母亲",
+        "父亲",
+        "哥哥",
+        "姐姐",
+        "弟弟",
+        "妹妹",
+        "儿子",
+        "女儿",
+        "爷爷",
+        "奶奶",
+        "外公",
+        "外婆",
+        "叔叔",
+        "阿姨",
+        "老师",
+        "同学",
+        "朋友",
+        "室友",
+        "同事",
+        "老板",
+        "领导",
+        "师父",
+        "师傅",
+        "徒弟",
+        "对象",
+        "男朋友",
+        "女朋友",
+        "丈夫",
+        "妻子",
+        "医生",
+        "客服",
+        "房东",
+        "邻居",
+    }
+)
+
+
+def filter_drafts(
+    drafts: Sequence[MemoryDraft],
+    *,
+    self_names: Sequence[str] = (),
+    focus_subjects: Sequence[str] = (),
+    participants: Sequence[str] = (),
+    require_person: bool = True,
+    default_subject: str = "",
+) -> tuple[list[MemoryDraft], list[tuple[MemoryDraft, str]]]:
+    """按「主语纪律」筛掉不该入库的候选。
+
+    返回 ``(留下的, [(被丢掉的, 原因)])``。
+
+    这道闸门是**代码**而不是提示词——提示词说「别记自己的事」，
+    模型偶尔还是会犯；犯一次，用户的记忆库里就多一条
+    「机器人自己看了什么番」，主人一眼就看出来被污染了。
+
+    丢弃规则：
+
+    1. 主语是机器人自己 → 丢（记忆库是「关于对方」的）；
+    2. 主语是泛指词（用户/对方/他/她）→ 换成默认主语，或丢；
+    3. 设了 ``focus_subjects`` 而主语不在其中 → 丢；
+    4. 主语既不是本次对话的说话人、也不是常见身份词 → 丢
+       （作品名、赛事名、链接名这类公共知识不是「关于某个人」的记忆）。
+    """
+
+    self_set = {str(n).strip() for n in self_names if str(n).strip()}
+    focus_set = {str(n).strip() for n in focus_subjects if str(n).strip()}
+    people_set = {str(n).strip() for n in participants if str(n).strip()}
+    fallback = str(default_subject or "").strip()
+
+    kept: list[MemoryDraft] = []
+    dropped: list[tuple[MemoryDraft, str]] = []
+    for draft in drafts:
+        subject = (draft.subject or "").strip()
+        if subject and subject in self_set:
+            dropped.append((draft, "self_fact"))
+            continue
+        if not subject:
+            # 模型没填主语：能确定是对话里哪个人就替他填上，
+            # 确定不了（有多个说话人且没配 focus）就丢掉——
+            # 提示词里写着「填不上就说明这条不值得记」。
+            if fallback and (not focus_set or fallback in focus_set):
+                draft = replace(draft, subject=fallback)
+            elif people_set:
+                dropped.append((draft, "no_subject"))
+                continue
+        elif subject in GENERIC_SUBJECTS:
+            if fallback and (not focus_set or fallback in focus_set):
+                draft = replace(draft, subject=fallback)
+            elif people_set:
+                # 知道这次对话里有谁，模型却还写「用户/对方」——
+                # 说明它没认出主语，这条没法用来做矛盾检测，丢掉。
+                dropped.append((draft, "generic_subject"))
+                continue
+            # 连说话人都不知道（老宿主没有昵称字段），就先留着，
+            # 总比把真事实扔掉强。
+        else:
+            if focus_set and subject not in focus_set:
+                dropped.append((draft, "not_focus"))
+                continue
+            if (
+                require_person
+                and people_set
+                and subject not in people_set
+                and subject not in PERSON_ROLES
+                and subject not in focus_set
+            ):
+                dropped.append((draft, "not_a_person"))
+                continue
+        kept.append(draft)
+    return kept, dropped
+
 GIST_SYSTEM_PROMPT = (
     "你把一条记忆压缩成一行不超过 {max_chars} 个字的摘要，"
     "保留关键信息（人、事、物、数字），去掉寒暄与语气词。"
+    "**只做压缩，不要补充原文里没有的信息**，"
+    "尤其不要自己加日期、集数、版本号这类看起来该有的细节。"
     "只输出摘要本身，不要解释。"
 )
 
@@ -95,6 +263,9 @@ CANONICALIZE_PROMPT = (
     "3. 说法不同但意思一样的，输出成同一条（内容取最完整的那版）。\n"
     "4. 意思不同的（比如称呼一个是「宝宝」一个是「Master」），**分成两条**，不要合并。\n"
     "5. 保留原文的人名，不要换成别的称呼。\n"
+    "6. **只做拆分与合并，绝不补充原文里没有的信息**——"
+    "不要加集数、日期、版本号、书名号里的作品名。"
+    "原文没说是第几季，就不要写「第五季」。\n"
     "\n"
     "输出 JSON 数组，不要解释：\n"
     '[{{"content":"...","subject":"...","predicate":"...","object":"..."}}]\n'
@@ -114,6 +285,8 @@ CANONICALIZE_SPLIT_PROMPT = (
     "   不要把整句话塞进 predicate。\n"
     "4. 保留原文的人名和具体数字，不要改写。\n"
     "5. 原文本来就只有一件事的，就原样输出，三元组照填。\n"
+    "6. **只做拆分，不要补充原文里没有的信息**——"
+    "不要加集数、日期、版本号、作品名。原文没说是第几季就别写第几季。\n"
     "\n"
     "输出 JSON **对象**：键是输入的编号（从 0 开始），值是这一条拆出来的列表。\n"
     "不要解释，不要 markdown 代码块：\n"
@@ -130,7 +303,8 @@ TRIPLE_PROMPT = (
     "1. subject 填主语（人名或事件名），predicate 填动宾短语（6 字以内），\n"
     "   object 填宾语。\n"
     "2. 一条对应一条输出，顺序一致，不要合并、不要拆分。\n"
-    "3. 只输出 JSON 数组，不要解释。\n"
+    "3. **只从原文里取**，不要补充原文没有的信息。\n"
+    "4. 只输出 JSON 数组，不要解释。\n"
     "\n"
     "事实：\n"
     "{facts}\n"
@@ -144,6 +318,8 @@ class ExtractionResult:
     raw: str = ""
     used_llm: bool = False
     error: str = ""
+    dropped: list[tuple[str, str]] = field(default_factory=list)
+    """被「主语纪律」丢掉的候选：(内容, 原因)。给宿主看日志用。"""
 
 
 _KIND_ALIASES = {
@@ -216,17 +392,66 @@ class MemoryExtractor:
             try:
                 raw, drafts = await self._complete_with_retry(
                     EXTRACTION_USER_TEMPLATE.format(conversation=conversation),
-                    system=EXTRACTION_SYSTEM_PROMPT,
+                    system=build_extraction_prompt(self.config),
                     max_tokens=4000,
                 )
-                return ExtractionResult(drafts=drafts, raw=raw, used_llm=True)
+                kept, dropped = self._apply_subject_policy(drafts, messages)
+                return ExtractionResult(
+                    drafts=kept,
+                    raw=raw,
+                    used_llm=True,
+                    dropped=[(d.content, reason) for d, reason in dropped],
+                )
             except Exception as exc:
                 fallback = self._rule_extract(conversation) if self.config.use_rules_fallback else []
-                return ExtractionResult(drafts=fallback, used_llm=False, error=str(exc))
+                kept, dropped = self._apply_subject_policy(fallback, messages)
+                return ExtractionResult(
+                    drafts=kept,
+                    used_llm=False,
+                    error=str(exc),
+                    dropped=[(d.content, reason) for d, reason in dropped],
+                )
 
         if self.config.use_rules_fallback:
-            return ExtractionResult(drafts=self._rule_extract(conversation), used_llm=False)
+            kept, dropped = self._apply_subject_policy(self._rule_extract(conversation), messages)
+            return ExtractionResult(
+                drafts=kept,
+                used_llm=False,
+                dropped=[(d.content, reason) for d, reason in dropped],
+            )
         return ExtractionResult()
+
+    def _apply_subject_policy(
+        self,
+        drafts: Sequence[MemoryDraft],
+        messages: Sequence[dict[str, Any]],
+    ) -> tuple[list[MemoryDraft], list[tuple[MemoryDraft, str]]]:
+        """按「主语纪律」筛一遍抽取结果。"""
+
+        if not drafts:
+            return [], []
+        participants = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            name = str(msg.get("speaker") or "").strip()
+            if name and name not in participants:
+                participants.append(name)
+        default_subject = ""
+        focus = [n.strip() for n in self.config.focus_subjects if n and n.strip()]
+        if focus:
+            default_subject = focus[0]
+        elif len(participants) == 1:
+            default_subject = participants[0]
+        kept, dropped = filter_drafts(
+            drafts,
+            self_names=self.config.self_names,
+            focus_subjects=self.config.focus_subjects,
+            participants=participants,
+            require_person=self.config.require_person_subject,
+            default_subject=default_subject,
+        )
+        return kept, dropped
 
     async def summarize(self, content: str, *, max_chars: int = 40) -> str:
         """把一条记忆压成 gist 摘要。LLM 不可用时退回规则兜底。"""
@@ -300,12 +525,13 @@ class MemoryExtractor:
             content = str(msg.get("content") or msg.get("text") or "").strip()
             if not content:
                 continue
+            speaker = str(msg.get("speaker") or "").strip()
             if role == "user":
-                lines.append(f"用户：{content}")
+                lines.append(f"{speaker or '用户'}：{content}")
             elif role == "assistant":
-                lines.append(f"机器人：{content}")
+                lines.append(f"{speaker or '机器人'}：{content}")
             else:
-                lines.append(f"{role or '对话'}：{content}")
+                lines.append(f"{speaker or role or '对话'}：{content}")
         return "\n".join(lines)
 
     async def _complete_with_retry(

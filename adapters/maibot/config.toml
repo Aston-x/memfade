@@ -16,6 +16,16 @@ extract_every_n = 3
 flush_idle_minutes = 10
 extract_min_messages = 2
 min_importance = 0.35
+# 机器人自己的名字：主语是它时不入库（留空则自动读宿主 bot_config 的 nickname）
+self_names = []
+# 只记这些主语的事（留空=不限制；群聊里认识很多人时用）
+focus_subjects = []
+# 抽取提示词里的人物提示，形如「（许杏玖 / 季怡）」
+subject_hint = ""
+# 主语必须是人（对话里出现过的名字或常见身份称呼），公共知识不入库
+require_person_subject = true
+# 抽取前剥掉被引用的原文与合并转发（污染的最大来源）
+strip_quotes = true
 use_host_llm = true
 llm_task_name = "memory"
 use_host_embedding = true

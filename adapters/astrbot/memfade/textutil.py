@@ -396,7 +396,19 @@ def join_tokens(tokens: Iterable[str]) -> str:
     return " ".join(t for t in tokens if t)
 
 
-_BRACKETS = {"（": "）", "(": ")", "【": "】", "[": "]", "「": "」", "『": "』", "《": "》"}
+_BRACKETS = {
+    "（": "）",
+    "(": ")",
+    "【": "】",
+    "[": "]",
+    "「": "」",
+    "『": "』",
+    "《": "》",
+    # 中文弯引号也得算：中文正文里写「简介“AI炼丹师，炼到什么发什么喵”」
+    # 时，引号里的逗号不是分句点。漏了它，体检会对着一条好好的记忆报警。
+    "“": "”",
+    "‘": "’",
+}
 _CLOSERS = set(_BRACKETS.values())
 # 句号级别的分隔符：一句就是一件事。
 _STRONG_SEP = "。！？!?"
@@ -417,9 +429,17 @@ CLAUSE_SPLIT_RE = re.compile(r"[，,；;。！？!?]")
 
 
 def clause_count(text: str) -> int:
-    """一句话里有几个分句（顿号不算并列项）。"""
+    """一句话里有几个分句（顿号不算并列项，括号引号里的标点也不算）。
 
-    return len([p for p in CLAUSE_SPLIT_RE.split(text or "") if p.strip()])
+    口径必须和 ``split_atomic`` 一致——它切分时跳过括号引号里的标点，
+    这里如果按裸标点切，「简介"AI炼丹师，炼到什么发什么喵"」会被算成两句，
+    体检就会对着一条好好的记忆报警。
+    """
+
+    key = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not key:
+        return 0
+    return len([piece for piece, _ in _split_outside_brackets(key) if piece.strip()])
 
 
 def split_atomic(text: str, *, max_chars: int = 40, max_clauses: int = 2) -> list[str]:

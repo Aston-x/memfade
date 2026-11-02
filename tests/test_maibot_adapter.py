@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import tempfile
 import time
@@ -271,9 +272,12 @@ class FakeLLM(FakeEmbedMixin):
     def __init__(self, reply: str):
         self.reply = reply
         self.calls: List[str] = []
+        self.delay: float = 0.0
 
     async def generate(self, prompt, max_tokens=None, temperature=None, **kwargs):
         self.calls.append(str(prompt))
+        if self.delay:
+            await asyncio.sleep(self.delay)
         return {"success": True, "response": self.reply, "reasoning": "", "model_name": "fake"}
 
 
@@ -415,10 +419,11 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"许杏玖喜欢辣的食物","kind":"preference","importance":0.8,'
-            '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢辣的"))
+        await plugin._drain_extractions()
         engine = plugin._engine
         self.assertEqual(engine.store.count("qq:session:sess-1"), 1)
         mem = engine.store.iter_scope("qq:session:sess-1")[0]
@@ -429,10 +434,11 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"许杏玖喜欢辣的食物","kind":"preference","importance":0.8,'
-            '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢辣的"))
+        await plugin._drain_extractions()
         engine = plugin._engine
         before = engine.store.iter_scope("qq:session:sess-1")[0]
         self.assertFalse(before.pinned)
@@ -443,6 +449,26 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         )
         after = engine.store.get(before.id)
         self.assertTrue(after.pinned, "置顶命令没生效")
+
+    async def test_extraction_does_not_block_the_reply(self):
+        """抽取要等 LLM（实机 30~60 秒），不能挡住主人的回复。
+
+        抽取挂在 ``chat.receive.after_process`` 这个阻塞钩子上，
+        在里面 await 一次 LLM，等于每 3 条消息就让主人多等一分钟。
+        """
+
+        plugin = self.plugin
+        plugin._ctx.llm.delay = 0.3
+        plugin._ctx.llm.reply = (
+            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+        )
+        started = time.time()
+        await plugin.handle_after_process(message=make_message("我喜欢辣的"))
+        elapsed = time.time() - started
+        self.assertLess(elapsed, 0.2, "抽取挡住了回复（%.2fs）" % elapsed)
+        await plugin._drain_extractions()
+        self.assertEqual(plugin._engine.store.count("qq:session:sess-1"), 1)
 
     async def test_pending_messages_survive_restart(self):
         """宿主重启不能把攒到一半还没抽的记忆丢掉。
@@ -459,7 +485,9 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         plugin._plugin_config_instance.memory.extract_every_n = 3
         plugin._ctx.llm.reply = "[]"
         await plugin.handle_after_process(message=make_message("我喜欢吃辣"))
+        await plugin._drain_extractions()
         await plugin.handle_after_process(message=make_message("我住在上海"))
+        await plugin._drain_extractions()
         self.assertTrue(any(plugin._buffer.values()), "缓冲里应该有消息")
 
         # 模拟重启：新建一个插件实例，读同一个数据目录
@@ -488,10 +516,11 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"许杏玖喜欢辣的食物","kind":"preference","importance":0.8,'
-            '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢辣的"))
+        await plugin._drain_extractions()
         engine = plugin._engine
         before = {
             m.id: (m.recall_count, m.strength, m.anchor_at)
@@ -512,6 +541,53 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         parsed = MemFadePlugin._parse_message(make_message("你好"))
         self.assertEqual(parsed["chat_type"], "private")
         self.assertEqual(parsed["user_id"], "1738157278")
+
+    async def test_quoted_and_forwarded_content_is_stripped(self):
+        """引用与转发不是用户的话——剥掉，否则抽取器会把它们记成用户的事。
+
+        真实事故：主人引用机器人的「你昨晚一口气刷完Re」，
+        记忆库里多了一条「许杏玖昨晚一口气刷完了Re」；
+        主人转发蓝桥杯群公告求总结，
+        记忆库里多了一条「季怡在备赛第18届蓝桥杯」。
+        """
+
+        from adapters.maibot.plugin import MemFadePlugin
+
+        message = {
+            "message_id": "m1",
+            "platform": "qq",
+            "session_id": "sess-1",
+            "message_info": {"user_info": {"user_id": "1738157278", "user_nickname": "季怡"}},
+            "processed_plain_text": "你昨晚一口气刷完Re，眼睛没熬坏吧  是在说我自己看的",
+            "raw_message": [
+                {
+                    "type": "reply",
+                    "data": {
+                        "target_message_id": "m0",
+                        "target_message_content": "你昨晚一口气刷完Re，眼睛没熬坏吧",
+                        "target_message_sender_id": "2760135586",
+                        "target_message_sender_nickname": "许杏玖",
+                        "target_message_sender_cardname": None,
+                    },
+                },
+                {"type": "text", "data": "是在说我自己看的"},
+            ],
+        }
+        parsed = MemFadePlugin._parse_message(message)
+        self.assertEqual(parsed["own_text"], "是在说我自己看的")
+        self.assertNotIn("刷完Re", parsed["own_text"])
+        self.assertEqual(parsed["speaker"], "季怡")
+
+    async def test_forward_block_is_stripped_from_plain_text(self):
+        """拿不到组件时，退一步把「【合并转发消息: ...】」整块切掉。"""
+
+        from adapters.maibot.plugin import MemFadePlugin
+
+        text = "【合并转发消息: \n【季怡】: 群公告正文\n】 帮我总结所有内容"
+        self.assertEqual(
+            MemFadePlugin._strip_leading_blocks(text),
+            "帮我总结所有内容",
+        )
 
     async def test_injects_context_into_maisaka(self):
         plugin = self.plugin
@@ -662,10 +738,11 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
     async def test_extracts_and_writes(self):
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"许杏玖喜欢辣的食物","kind":"semantic","importance":0.8,'
-            '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"季怡喜欢辣的食物","kind":"semantic","importance":0.8,'
+            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢吃辣的"))
+        await plugin._drain_extractions()
         self.assertEqual(plugin._engine.store.count(), 1, "应当抽取并写入一条记忆")
 
     async def test_group_and_private_are_isolated(self):
@@ -674,6 +751,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
             '[{"content":"私聊里说的私密内容","kind":"semantic","importance":0.9,"cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("悄悄话"))
+        await plugin._drain_extractions()
         engine = plugin._engine
         self.assertEqual(engine.store.count("qq:session:sess-1"), 1)
         self.assertEqual(engine.store.count("qq:session:sess-other"), 0, "别的会话不该看到")
@@ -683,9 +761,10 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"许杏玖喜欢辣的食物","kind":"semantic","importance":0.8,"cross_scope":false}]'
+            '[{"content":"季怡喜欢辣的食物","kind":"semantic","importance":0.8,"cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢吃辣的"))
+        await plugin._drain_extractions()
         engine = plugin._engine
         self.assertEqual(engine.store.count("qq:session:sess-1"), 1)
         # 命令侧只有 stream_id，没有 message 结构
@@ -699,6 +778,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
             '[{"content":"群里的记忆","kind":"semantic","importance":0.8,"cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("在群里说", group_id="1127155154"))
+        await plugin._drain_extractions()
         engine = plugin._engine
         self.assertEqual(engine.store.count("qq:session:sess-1"), 1)
         other = plugin._scope_from_kwargs({"stream_id": "sess-2"})
@@ -708,6 +788,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         plugin = self.plugin
         plugin.config.plugin.enabled = False
         await plugin.handle_after_process(message=make_message("你好"))
+        await plugin._drain_extractions()
         self.assertFalse(plugin._ctx.maisaka.context.appended)
 
     async def test_idle_flush_extracts_short_conversations(self):
@@ -720,13 +801,14 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"许杏玖喜欢辣的食物","kind":"semantic","importance":0.8,'
-            '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"季怡喜欢辣的食物","kind":"semantic","importance":0.8,'
+            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         # 复现实机配置：攒够 3 条才抽
         plugin.config.memory.extract_every_n = 3
         # 只来一条消息，达不到 extract_every_n=3
         await plugin.handle_after_process(message=make_message("我喜欢吃辣"))
+        await plugin._drain_extractions()
         self.assertEqual(plugin._engine.store.count("qq:session:sess-1"), 0)
         # 假装这段对话已经安静了 30 分钟
         plugin._buffer_at["qq:session:sess-1"] = time.time() - 1800

@@ -84,6 +84,27 @@ class MemorySectionConfig(PluginConfigBase):
     extract_min_messages: int = Field(default=2, description="一轮里至少几条消息才抽取")
     min_importance: float = Field(default=0.35, description="低于此显著性的内容不入库")
 
+    self_names: list[str] = Field(
+        default_factory=list,
+        description="机器人自己的名字：主语是它时不入库（留空则自动读宿主 bot_config 的 nickname）",
+    )
+    focus_subjects: list[str] = Field(
+        default_factory=list,
+        description="只记这些主语的事（留空=不限制；群聊里认识很多人时用）",
+    )
+    subject_hint: str = Field(
+        default="",
+        description="抽取提示词里的人物提示，形如「（许杏玖 / 季怡）」",
+    )
+    require_person_subject: bool = Field(
+        default=True,
+        description="主语必须是人（对话里出现过的名字或常见身份称呼），公共知识不入库",
+    )
+    strip_quotes: bool = Field(
+        default=True,
+        description="抽取前剥掉被引用的原文与合并转发（污染的最大来源）",
+    )
+
     use_host_llm: bool = Field(default=True, description="抽取与摘要复用宿主 LLM")
     llm_task_name: str = Field(default="memory", description="宿主模型任务名（memory/utils 均可）")
     use_host_embedding: bool = Field(default=True, description="向量检索复用宿主嵌入模型")
@@ -168,12 +189,52 @@ class HostEmbeddingClient:
         return out[: len(items)]
 
 
+def _host_bot_names() -> List[str]:
+    """从宿主配置里读机器人自己的名字。
+
+    为什么要自动读：记忆库是「关于对方」的，而**最容易被污染的一类**
+    就是「机器人自己的事」——主语写成机器人自己的名字。
+    让部署者手填一遍是漏填的温床，所以能自动读就自动读。
+
+    读不到就返回空列表（此时不拦主语），不猜、不硬编码。
+    """
+
+    names: List[str] = []
+    try:
+        # 插件目录形如 <MaiBot根>/plugins/<插件名>，往上两级就是宿主根目录。
+        host_root = os.path.dirname(os.path.dirname(_HERE))
+        config_path = os.path.join(host_root, "config", "bot_config.toml")
+        if not os.path.exists(config_path):
+            return names
+        with open(config_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                stripped = line.strip()
+                if not stripped.startswith("nickname"):
+                    continue
+                _, _, value = stripped.partition("=")
+                value = value.split("#", 1)[0].strip().strip('"').strip("'")
+                if value:
+                    names.append(value)
+                break
+    except Exception:
+        return names
+    return names
+
+
+def _self_names(plugin: "MemFadePlugin") -> List[str]:
+    """机器人自己的名字：配置里写的优先，否则自动读宿主配置。"""
+
+    configured = [str(n).strip() for n in (plugin.config.memory.self_names or []) if str(n).strip()]
+    return configured or _host_bot_names()
+
+
 def _build_engine_config(plugin: "MemFadePlugin", db_path: str) -> MemFadeConfig:
     """把插件配置翻译成核心配置。"""
 
     cfg = plugin.config
     mem = cfg.memory
     fade = cfg.fade
+    focus = tuple(str(n).strip() for n in (mem.focus_subjects or []) if str(n).strip())
     data = {
         "storage": {"db_path": db_path, "enable_fts": True, "enable_vector": mem.use_host_embedding},
         "extraction": {
@@ -184,6 +245,11 @@ def _build_engine_config(plugin: "MemFadePlugin", db_path: str) -> MemFadeConfig
             "max_per_batch": 8,
             "use_rules_fallback": True,
             "promote_cross_scope": bool(mem.cross_session),
+            "subject_hint": str(mem.subject_hint or ""),
+            "self_names": tuple(_self_names(plugin)),
+            "focus_subjects": tuple(focus),
+            "require_person_subject": bool(mem.require_person_subject),
+            "strip_quotes": bool(mem.strip_quotes),
         },
         "retrieval": {
             "top_k": max(1, int(mem.top_k)),
@@ -230,6 +296,8 @@ class MemFadePlugin(MaiBotPlugin):
         """后台维护循环的心跳次数。用来确认循环真的在跑。"""
         self._last_search: List[Dict[str, Any]] = []
         self._last_explain: List[Dict[str, Any]] = []
+        self._extract_tasks: set = set()
+        """后台抽取任务。抽取要等 LLM，不能让它挡住主人的回复。"""
         self._recent_user_text: Dict[str, str] = {}
         """每个会话最近一条用户消息——回复器钩子拿不到 items，用它做检索词。"""
 
@@ -248,6 +316,12 @@ class MemFadePlugin(MaiBotPlugin):
         """插件卸载：收尾。"""
 
         self._save_buffer()
+        # 后台抽取任务还在等 LLM 的话，别让它们在引擎关掉之后还往里写。
+        for task in list(self._extract_tasks):
+            task.cancel()
+        if self._extract_tasks:
+            await asyncio.gather(*list(self._extract_tasks), return_exceptions=True)
+            self._extract_tasks.clear()
         if self._maintain_task is not None:
             self._maintain_task.cancel()
             try:
@@ -419,9 +493,11 @@ class MemFadePlugin(MaiBotPlugin):
         additional = additional if isinstance(additional, dict) else {}
         group_id = str(group_info.get("group_id") or "").strip()
         user_id = str(user_info.get("user_id") or "").strip()
+        speaker = str(user_info.get("user_cardname") or user_info.get("user_nickname") or "").strip()
         text = str(message.get("processed_plain_text") or "").strip()
         if not text:
-            text = str(message.get("raw_message") or "").strip()
+            raw_text = message.get("raw_message")
+            text = raw_text.strip() if isinstance(raw_text, str) else ""
         session_id = str(message.get("session_id") or "").strip()
         if not session_id:
             for key in ("session_id", "stream_id", "chat_id"):
@@ -434,9 +510,78 @@ class MemFadePlugin(MaiBotPlugin):
             "group_id": group_id,
             "user_id": user_id,
             "text": text,
+            "own_text": MemFadePlugin._own_text(message),
+            "speaker": speaker,
             "session_id": session_id,
             "chat_type": "group" if group_id else "private",
         }
+
+    @staticmethod
+    def _own_text(message: Dict[str, Any]) -> str:
+        """只留用户自己说的话：去掉被引用的原文与合并转发。
+
+        **这是记忆库被污染的最大来源。**
+
+        宿主把「被引用的那条消息」拼进用户的正文里（回复别人的话、
+        转发一份群公告），用户发出来的其实是「别人的话 + 他自己的话」。
+        抽取器对着这份文本做抽取，于是把**机器人自己说过的话**、
+        **群公告的原文**当成了用户的话记下来：
+
+        * 主人引用机器人的「你昨晚一口气刷完Re」，于是记忆库里多了一条
+          「许杏玖昨晚一口气刷完了Re」——机器人认领了主人说的话；
+        * 主人转发蓝桥杯群公告求总结，于是「季怡在备赛第18届蓝桥杯」
+          被记了下来——可主人当时明确说过「我没跟你说过我要报名」。
+
+        所以抽取前先把这两块剥掉：**引用与转发不是用户的话。**
+        """
+
+        raw = message.get("raw_message")
+        parts: List[str] = []
+        if isinstance(raw, list):
+            for comp in raw:
+                if not isinstance(comp, dict):
+                    continue
+                ctype = str(comp.get("type") or "").strip().lower()
+                if ctype != "text":
+                    continue
+                data = comp.get("data")
+                if isinstance(data, str) and data.strip():
+                    parts.append(data.strip())
+        if parts:
+            return " ".join(parts)
+        # 拿不到组件（别的宿主实现），退一步：把开头的引用/转发块切掉。
+        text = str(message.get("processed_plain_text") or "").strip()
+        return MemFadePlugin._strip_leading_blocks(text)
+
+    @staticmethod
+    def _strip_leading_blocks(text: str) -> str:
+        """剥掉开头的引用块（[回复了X的消息: ...]）与转发块（【合并转发消息: ...】）。"""
+
+        out = (text or "").strip()
+        for _ in range(8):  # 最多剥几层，防止异常输入把 CPU 拖住
+            if out.startswith("【合并转发消息"):
+                end = out.rfind("】")
+                if end <= 0:
+                    break
+                out = out[end + 1 :].strip()
+                continue
+            if out.startswith("[回复了"):
+                depth = 0
+                end = -1
+                for index, char in enumerate(out):
+                    if char == "[":
+                        depth += 1
+                    elif char == "]":
+                        depth -= 1
+                        if depth == 0:
+                            end = index
+                            break
+                if end <= 0:
+                    break
+                out = out[end + 1 :].strip()
+                continue
+            break
+        return out
 
     def _scope_from_kwargs(self, kwargs: Dict[str, Any]) -> Scope:
         """从命令/工具的 kwargs 推作用域。
@@ -513,7 +658,7 @@ class MemFadePlugin(MaiBotPlugin):
                 self.ctx.logger.info(
                     "[memfade] 旁听消息 scope=%s 第 %d 条", key, self._counter.get(key, 0) + 1
                 )
-            await self._maybe_extract(parsed, scope)
+            self._maybe_extract(parsed, scope)
 
         # 2) 整理交给后台循环（_maintenance_loop），这里不再重复触发
         return None
@@ -755,15 +900,31 @@ class MemFadePlugin(MaiBotPlugin):
             )
         return "\n\n".join(blocks)
 
-    async def _maybe_extract(self, parsed: Dict[str, Any], scope: Scope) -> None:
-        """按节奏抽取记忆。"""
+    def _maybe_extract(self, parsed: Dict[str, Any], scope: Scope) -> None:
+        """按节奏抽取记忆（**不阻塞**回复）。
+
+        抽取要问一次 LLM，实测 MiniMax 这类开 thinking 的模型要 30~60 秒。
+        它挂在 ``chat.receive.after_process`` 这个阻塞钩子上，
+        等于**每 3 条消息就让主人多等一分钟**——
+        所以这里只把消息攒好，真正的抽取丢到后台任务里跑。
+        """
 
         engine = self._engine
         if engine is None:
             return
         key = scope.key()
         buffer = self._buffer.setdefault(key, [])
-        buffer.append({"role": "user", "content": parsed.get("text") or ""})
+        # 只把**用户自己说的话**放进缓冲区，并带上说话人昵称：
+        # 抽取器要能分清「谁说的」，否则主人的一句「是你自己看的」
+        # 会被记成机器人自己的记忆。
+        content = parsed.get("text") or ""
+        if self.config.memory.strip_quotes:
+            content = parsed.get("own_text") or content
+        entry = {"role": "user", "content": content}
+        speaker = parsed.get("speaker") or ""
+        if speaker:
+            entry["speaker"] = speaker
+        buffer.append(entry)
         self._buffer_at[key] = time.time()
         self._save_buffer()
         count = self._counter.get(key, 0) + 1
@@ -775,20 +936,47 @@ class MemFadePlugin(MaiBotPlugin):
         pending = list(buffer)
         buffer.clear()
         self._save_buffer()
+        meta = {
+            "group_id": parsed.get("group_id") or "",
+            "user_id": parsed.get("user_id") or "",
+            "chat_type": parsed.get("chat_type") or "",
+        }
+        task = asyncio.create_task(self._extract_pending(pending, scope, key, meta))
+        self._extract_tasks.add(task)
+        task.add_done_callback(self._extract_tasks.discard)
+
+    async def _extract_pending(
+        self,
+        pending: List[Dict[str, Any]],
+        scope: Scope,
+        key: str,
+        meta: Dict[str, Any],
+    ) -> None:
+        """后台跑一次抽取。"""
+
+        engine = self._engine
+        if engine is None:
+            return
         try:
-            meta = {
-                "group_id": parsed.get("group_id") or "",
-                "user_id": parsed.get("user_id") or "",
-                "chat_type": parsed.get("chat_type") or "",
-            }
             written = await engine.remember_from_messages(pending, scope, source=key, meta=meta)
             if written:
                 self.ctx.logger.info("[memfade] 抽取到 %d 条新记忆（%s）", len(written), key)
+            for content, reason in getattr(engine, "last_dropped", []) or []:
+                self.ctx.logger.info(
+                    "[memfade] 丢弃候选（%s）：%s", reason, (content or "")[:40]
+                )
         except Exception as exc:
             self.ctx.logger.warning("[memfade] 抽取记忆失败: %s", exc)
             # 抽取失败不丢内容，放回缓冲区下次一起试
+            buffer = self._buffer.setdefault(key, [])
             buffer.extend(pending)
             self._save_buffer()
+
+    async def _drain_extractions(self) -> None:
+        """等后台抽取任务跑完（测试与卸载时用）。"""
+
+        while self._extract_tasks:
+            await asyncio.gather(*list(self._extract_tasks), return_exceptions=True)
 
     async def _flush_idle_buffers(self) -> None:
         """把「安静下来」的会话攒下的消息抽成记忆。
@@ -1269,9 +1457,16 @@ class MemFadePlugin(MaiBotPlugin):
             if not line:
                 continue
             if line.startswith("用户："):
-                messages.append({"role": "user", "content": line[3:].strip()})
+                messages.append({"role": "user", "content": line[3:].strip(), "speaker": "用户"})
             elif line.startswith("机器人："):
-                messages.append({"role": "assistant", "content": line[4:].strip()})
+                messages.append({"role": "assistant", "content": line[4:].strip(), "speaker": "机器人"})
+            elif "：" in line:
+                # 「季怡：xxx」这种带名字的写法也算——
+                # 有名字才测得出「主语纪律」那几道闸门。
+                speaker, _, content = line.partition("：")
+                messages.append(
+                    {"role": "user", "content": content.strip(), "speaker": speaker.strip()}
+                )
         try:
             # ⚠ 加个超时：LLM 慢的时候（MiniMax 的 thinking 可能跑到 60 秒+）
             # WebUI 的网关会先 504，按钮就变成「点了没反应」。
@@ -1307,6 +1502,9 @@ class MemFadePlugin(MaiBotPlugin):
                     "cross_scope": d.cross_scope,
                 }
                 for d in result.drafts
+            ],
+            "dropped": [
+                {"content": content, "reason": reason} for content, reason in result.dropped
             ],
         }
 

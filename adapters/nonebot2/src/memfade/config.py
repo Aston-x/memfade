@@ -69,6 +69,42 @@ class ExtractionConfig:
     promote_cross_scope: bool = True
     """是否允许抽取器把「用户主动要求记住」的内容提升为跨会话共享。"""
 
+    subject_hint: str = ""
+    """抽取提示词里的「这次对话里有谁」提示。
+
+    核心库不绑定任何人名——部署时把名字填进来（形如「（许杏玖 / 季怡）」），
+    抽取器才知道该用谁当主语。留空则用中性示例。
+    """
+
+    self_names: tuple[str, ...] = ()
+    """机器人自己的名字（可以有多个别名）。
+
+    抽取结果的主语是它时一律丢弃。理由很实在：**记忆库是「关于对方」的**，
+    机器人自己的事（自己看过什么番、自己收藏了什么）记进去没有意义，
+    还会让机器人对着主人认领别人的记忆。
+    """
+
+    focus_subjects: tuple[str, ...] = ()
+    """只记这些主语的事。留空 = 不限制。
+
+    群聊里认识很多人时用它收窄：主人叫「季怡」，那就只记季怡的事。
+    """
+
+    require_person_subject: bool = True
+    """主语必须是「人」（对话里出现过的说话人，或常见的亲属/身份称呼）。
+
+    非人的主语——《牧神记5》、第18届蓝桥杯、四个 t.wiki——
+    都是知识条目或资料碎片，不是「关于某个人」的记忆，一律不入库。
+    """
+
+    strip_quotes: bool = True
+    """抽取前是否剥掉引用与转发内容（由适配器实现）。
+
+    这是**污染的最大来源**：宿主把「被引用的原文」拼进用户的消息正文，
+    抽取器于是把机器人自己说过的话、群公告的原文，
+    当成用户的话记了下来。
+    """
+
 
 @dataclass
 class RetrievalConfig:
@@ -298,6 +334,10 @@ def _apply_dict(target: Any, data: dict[str, Any]) -> None:
         current = getattr(target, key)
         if is_dataclass(current) and isinstance(value, dict):
             _apply_dict(current, value)
+        elif isinstance(current, tuple) and isinstance(value, list):
+            # TOML/JSON 读出来的是 list，配置里声明的是 tuple——统一一下，
+            # 不然 `name in self_names` 这种按元素比较的地方会静默失配。
+            setattr(target, key, tuple(value))
         else:
             setattr(target, key, value)
 
