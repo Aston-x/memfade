@@ -596,6 +596,41 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("刷完Re", parsed["own_text"])
         self.assertEqual(parsed["speaker"], "季怡")
 
+    async def test_quoted_text_is_kept_as_context(self):
+        """被引用的原文要留成一行「机器人：」上下文——它是上下文，不是用户的话。
+
+        删掉它的后果：用户回「买了」，抽取器不知道买的是什么，
+        只能记一句含糊的废话或者干脆不记。
+        """
+
+        plugin = self.plugin
+        # 让消息先攒着（默认配置是每条就抽，那样缓冲区会被清空）
+        plugin._plugin_config_instance.memory.extract_every_n = 3
+        message = {
+            "message_id": "m1",
+            "platform": "qq",
+            "session_id": "sess-1",
+            "message_info": {"user_info": {"user_id": "1738157278", "user_nickname": "季怡"}},
+            "processed_plain_text": "Master，《影之刃零》买了吗 买了，昨天已经可以玩了",
+            "raw_message": [
+                {
+                    "type": "reply",
+                    "data": {
+                        "target_message_id": "m0",
+                        "target_message_content": "Master，《影之刃零》买了吗",
+                        "target_message_sender_id": "2760135586",
+                        "target_message_sender_nickname": "许杏玖",
+                    },
+                },
+                {"type": "text", "data": "买了，昨天已经可以玩了"},
+            ],
+        }
+        await plugin.handle_after_process(message=message)
+        buffer = plugin._buffer.get("qq:session:sess-1") or []
+        roles = [(entry.get("role"), entry.get("content")) for entry in buffer]
+        self.assertIn(("assistant", "Master，《影之刃零》买了吗"), roles)
+        self.assertIn(("user", "买了，昨天已经可以玩了"), roles)
+
     async def test_forward_block_is_stripped_from_plain_text(self):
         """拿不到组件时，退一步把「【合并转发消息: ...】」整块切掉。"""
 

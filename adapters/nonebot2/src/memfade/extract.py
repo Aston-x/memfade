@@ -56,6 +56,10 @@ EXTRACTION_SYSTEM_PROMPT = (
     "   - 作品设定、剧情、赛事规则、播出时间、游戏机制这类公共知识。\n"
     "2. 引用、转发、复述里的内容不是用户的话，别记。"
     "「我把你那句总结存下来了」里的正文是别人写的。\n"
+    "2b. 对话里以「机器人：」开头的行是**机器人自己说的话**，"
+    "它只是**上下文**——用来搞清「他」指谁、「那个」是什么，"
+    "不要从那些行里提取任何事实，也不要相信机器人对用户的描述"
+    "（它可能把用户的事说错，用户还当场纠正过它）。\n"
     "3. 用户否认、纠正、反问、收回的话不要记。"
     "「不是我看的是你看」只说明是个误会，别把它记成事实。\n"
     "4. 用户只是寒暄、提问、开玩笑、试探（问「你是谁」「你会骂人」这种）时，"
@@ -433,6 +437,10 @@ class MemoryExtractor:
         participants = []
         for msg in messages:
             if not isinstance(msg, dict):
+                continue
+            # 只有「用户自己说的话」才算参与者——
+            # 机器人是上下文，不是要被记住的那个人。
+            if str(msg.get("role") or "") == "assistant":
                 continue
             name = str(msg.get("speaker") or "").strip()
             if name and name not in participants:

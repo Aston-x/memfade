@@ -511,6 +511,7 @@ class MemFadePlugin(MaiBotPlugin):
             "user_id": user_id,
             "text": text,
             "own_text": MemFadePlugin._own_text(message),
+            "quote_text": MemFadePlugin._quoted_text(message),
             "speaker": speaker,
             "session_id": session_id,
             "chat_type": "group" if group_id else "private",
@@ -552,6 +553,34 @@ class MemFadePlugin(MaiBotPlugin):
         # 拿不到组件（别的宿主实现），退一步：把开头的引用/转发块切掉。
         text = str(message.get("processed_plain_text") or "").strip()
         return MemFadePlugin._strip_leading_blocks(text)
+
+    @staticmethod
+    def _quoted_text(message: Dict[str, Any]) -> str:
+        """取被引用的那段原文（机器人或别人刚说过的话）。
+
+        **它不是用户的话，但它是上下文。**
+        「Master，《影之刃零》买了吗」是机器人问的，
+        用户回「买了」——没有这句上下文，抽取器只知道用户「买了」，
+        根本不知道买的是什么，最后只能记一句含糊的废话。
+
+        所以：**不删，改成一行标注清楚的上下文**，
+        提示词里写死「机器人：的行只用来判断指代，不要从中提取事实」。
+        实测（宿主真实 LLM）：
+        - 有上下文 → 抽出「季怡已经购买《影之刃零》」（对）；
+        - 没上下文 → 这条直接不抽（宁可少记，也不要记含糊的）。
+        """
+
+        raw = message.get("raw_message")
+        if not isinstance(raw, list):
+            return ""
+        for comp in raw:
+            if not isinstance(comp, dict):
+                continue
+            if str(comp.get("type") or "").strip().lower() != "reply":
+                continue
+            data = comp.get("data") or {}
+            return str(data.get("target_message_content") or "").strip()
+        return ""
 
     @staticmethod
     def _strip_leading_blocks(text: str) -> str:
@@ -914,9 +943,14 @@ class MemFadePlugin(MaiBotPlugin):
             return
         key = scope.key()
         buffer = self._buffer.setdefault(key, [])
-        # 只把**用户自己说的话**放进缓冲区，并带上说话人昵称：
-        # 抽取器要能分清「谁说的」，否则主人的一句「是你自己看的」
-        # 会被记成机器人自己的记忆。
+        # 缓冲区里放两种行：
+        # - **用户自己说的话**（引用与转发已剥掉），带说话人昵称；
+        # - **被引用的原文**（机器人刚说过的话），标成「机器人」行。
+        #   它不是用户的话，只是上下文——没有它，抽取器只知道用户「买了」，
+        #   不知道买的是什么，只能记一句含糊的废话。
+        quote = parsed.get("quote_text") or ""
+        if quote and self.config.memory.strip_quotes:
+            buffer.append({"role": "assistant", "content": quote})
         content = parsed.get("text") or ""
         if self.config.memory.strip_quotes:
             content = parsed.get("own_text") or content

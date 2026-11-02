@@ -127,6 +127,49 @@ class TestPrompt(unittest.TestCase):
         self.assertNotIn("{SUBJECT_HINT}", prompt)
 
 
+class TestContextLine(unittest.TestCase):
+    """被引用的原文要当**上下文**留着，不是删掉也不是当用户的话。
+
+    删掉它的后果：用户回「买了」，抽取器不知道买的是什么，
+    只能记一句含糊的废话，或者干脆不记。
+    当成用户的话的后果：机器人说过的、替用户断言的事，全被记成用户的事。
+    """
+
+    def test_assistant_line_is_rendered_as_context(self):
+        from memfade.extract import MemoryExtractor
+
+        extractor = MemoryExtractor(ExtractionConfig())
+        rendered = extractor._render(
+            [
+                {"role": "assistant", "content": "Master，《影之刃零》买了吗"},
+                {"role": "user", "content": "买了", "speaker": "季怡"},
+            ]
+        )
+        self.assertIn("机器人：Master，《影之刃零》买了吗", rendered)
+        self.assertIn("季怡：买了", rendered)
+
+    def test_assistant_line_is_not_a_participant(self):
+        """机器人不是「要被记住的那个人」——它只是上下文。"""
+
+        from memfade.extract import MemoryExtractor
+
+        extractor = MemoryExtractor(
+            ExtractionConfig(focus_subjects=("季怡",), self_names=("许杏玖",))
+        )
+        kept, dropped = extractor._apply_subject_policy(
+            [
+                _draft("季怡买了《影之刃零》", "季怡"),
+                _draft("许杏玖昨晚刷完了Re", "许杏玖"),
+            ],
+            [
+                {"role": "assistant", "content": "Master，《影之刃零》买了吗"},
+                {"role": "user", "content": "买了", "speaker": "季怡"},
+            ],
+        )
+        self.assertEqual([d.content for d in kept], ["季怡买了《影之刃零》"])
+        self.assertEqual(dropped[0][1], "self_fact")
+
+
 class TestHealthCheck(unittest.TestCase):
     """体检要能抓到污染——不然脏库会一直脏着，没人发现。"""
 

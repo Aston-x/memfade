@@ -98,11 +98,12 @@ def _messages(conversation: str) -> List[Dict[str, Any]]:
         speaker, sep, content = line.partition("：")
         if not sep:
             speaker, content = "用户", line
+        role = "assistant" if speaker.strip().lower() in ("机器人", "assistant", "bot") else "user"
         out.append(
             {
-                "role": "user",
+                "role": role,
                 "content": content.strip(),
-                "speaker": speaker.strip() or "用户",
+                "speaker": "" if role == "assistant" else (speaker.strip() or "用户"),
             }
         )
     return out

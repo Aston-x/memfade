@@ -27,6 +27,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from memfade.diagnostics import ATOMIC_MAX  # noqa: E402
 from memfade.textutil import normalized_hash  # noqa: E402
 
 
@@ -50,8 +51,16 @@ def load(db_path: str) -> List[Dict[str, Any]]:
 
 
 def clause_count(text: str) -> int:
-    return len([p for p in SPLIT_RE.split(text or "") if p.strip()])
+    """分句数——**必须用核心库那把尺子**。
 
+    这个脚本以前自己按裸标点切，于是「简介"AI炼丹师，炼到什么发什么喵"」
+    被算成三句，体检说 0 条、这里说 6 条。
+    同一件事两把尺子，报告就没法互相印证了。
+    """
+
+    from memfade.textutil import clause_count as core_clause_count
+
+    return core_clause_count(text)
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="memfade 记忆质量体检")
@@ -70,7 +79,9 @@ def main() -> int:
     hashes = Counter(normalized_hash(r["content"]) for r in rows)
 
     too_long = [r for r in rows if len(r["content"] or "") > GOOD_MAX]
-    multi = [r for r in rows if clause_count(r["content"]) > 1]
+    # 门槛与体检一致（诊断里 ATOMIC_MAX=2，即三句以上才算塞多了）。
+    # 两处口径不一样，报告就没法互相印证。
+    multi = [r for r in rows if clause_count(r["content"]) > ATOMIC_MAX]
     no_spo = [r for r in rows if not (r["subject"] and r["predicate"])]
     exact_dupes = sum(count - 1 for count in hashes.values() if count > 1)
 
