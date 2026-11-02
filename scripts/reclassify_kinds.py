@@ -122,6 +122,11 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=8, help="每次问模型几条")
     parser.add_argument("--max-tokens", type=int, default=4000)
     parser.add_argument("--dry-run", action="store_true", help="只报告，不写库")
+    parser.add_argument(
+        "--only",
+        default="",
+        help="只处理这些 id（逗号分隔），其余不动——机器的判定也要人来拍板",
+    )
     args = parser.parse_args()
 
     if not args.host_root:
@@ -131,9 +136,18 @@ def main() -> int:
     conn = sqlite3.connect(args.db, timeout=30)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(
-            "SELECT id, kind, importance, content FROM memories WHERE status != 'superseded'"
-        ).fetchall()
+        only = [int(x) for x in (args.only or "").replace(" ", "").split(",") if x]
+        if only:
+            placeholders = ",".join("?" * len(only))
+            rows = conn.execute(
+                "SELECT id, kind, importance, content FROM memories "
+                "WHERE status != 'superseded' AND id IN (%s)" % placeholders,
+                only,
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, kind, importance, content FROM memories WHERE status != 'superseded'"
+            ).fetchall()
     finally:
         conn.close()
     if not rows:
