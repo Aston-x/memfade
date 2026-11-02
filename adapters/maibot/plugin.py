@@ -763,8 +763,10 @@ class MemFadePlugin(MaiBotPlugin):
 
     @Command(
         "记忆",
-        description="查看记忆。/记忆 查当前会话记住的东西，/记忆 搜 <关键词>，/记忆 整理 立刻跑一轮整理",
-        pattern=r"^/(?:记忆|memory)(?:\s+(?P<action>搜|search|整理|maintain)?)?(?:\s+(?P<query>.+))?$",
+        description="查看记忆。/记忆 查当前会话记住的东西，/记忆 搜 <关键词>，"
+        "/记忆 整理 立刻跑一轮整理，/记忆 置顶 <内容> 让它永不淡化",
+        pattern=r"^/(?:记忆|memory)(?:\s+(?P<action>搜|search|整理|maintain|置顶|pin|取消置顶|unpin)?)?"
+        r"(?:\s+(?P<query>.+))?$",
     )
     async def cmd_memory(self, **kwargs: Any) -> tuple:
         """记忆查询命令。"""
@@ -804,6 +806,24 @@ class MemFadePlugin(MaiBotPlugin):
                 lines.append(f"· {hit.memory.content}{marker}")
             await self.ctx.send.text("记得这些：\n" + "\n".join(lines), stream_id)
             return True, f"找到 {len(hits)} 条记忆", 0
+
+        if action in ("置顶", "pin", "取消置顶", "unpin"):
+            pinned = action in ("置顶", "pin")
+            if not query:
+                await self.ctx.send.text("要置顶（或取消置顶）哪条？给点内容片段。", stream_id)
+                return True, "缺少内容", 0
+            vector = await engine.embed_query(query) if query else None
+            hits = engine.recall(
+                query, scope, top_k=5, query_vector=vector, require_match=True
+            )
+            if not hits:
+                await self.ctx.send.text("没找到相关的记忆。", stream_id)
+                return True, "没找到相关记忆", 0
+            target = hits[0].memory
+            engine.pin(target.id, pinned=pinned)
+            verb = "置顶了" if pinned else "取消置顶了"
+            await self.ctx.send.text(f"{verb}：{target.content}", stream_id)
+            return True, "已" + verb, 0
 
         stats = engine.stats(scope)
         by_status = stats.get("by_status") or {}

@@ -138,6 +138,33 @@ class TestHTTPSidecar(unittest.TestCase):
         result = self._post("/recall", {"scope": scope, "query": "辣", "top_k": 8})
         self.assertEqual(len(result["hits"]), 1, "单字查询也要能查到")
 
+    def test_forget_and_pin_over_http(self):
+        """侧车要能忘掉、置顶——这两个能力引擎里有，接口上却缺着。"""
+
+        scope = {"platform": "qq", "chat_type": "private", "chat_id": "u1"}
+        written = self._post(
+            "/remember", {"scope": scope, "content": "许杏玖喜欢辣的食物", "importance": 0.9}
+        )
+        self.assertTrue(written["ok"])
+        mid = written["ids"][0]
+
+        # 置顶：置顶的记忆不参与衰减
+        pinned = self._post("/pin", {"scope": scope, "id": mid, "pinned": True})
+        self.assertTrue(pinned["ok"])
+        mem = self.engine.store.get(mid)
+        self.assertTrue(mem.pinned)
+
+        # 取消置顶
+        unpinned = self._post("/pin", {"scope": scope, "id": mid, "pinned": False})
+        self.assertTrue(unpinned["ok"])
+        self.assertFalse(self.engine.store.get(mid).pinned)
+
+        # 按内容忘掉
+        gone = self._post("/forget", {"scope": scope, "content": "辣的食物"})
+        self.assertTrue(gone["ok"])
+        hits = self._post("/recall", {"scope": scope, "query": "辣的食物", "top_k": 5})
+        self.assertEqual(len(hits["hits"]), 0, "忘掉之后不该还查得到")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,11 +13,19 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from typing import Any, Iterable, Optional, Sequence
 
 from .config import MemFadeConfig
 from .consolidate import ConsolidationReport, ConsolidationService
-from .decay import DEFAULT_POLICY, FadePolicy, MemoryEvent, apply_event, effective_strength
+from .decay import (
+    DEFAULT_POLICY,
+    FadePolicy,
+    MemoryEvent,
+    apply_event,
+    effective_strength,
+    resolve_status,
+)
 from .dedup import is_near_duplicate
 from .embedding import EmbeddingClient, make_embedder
 from .extract import MemoryExtractor
@@ -456,13 +464,22 @@ class MemoryEngine:
     # 管理
     # ------------------------------------------------------------------ #
 
-    def pin(self, memory_id: int, *, now: Optional[float] = None) -> bool:
-        """置顶：此后永不衰减。"""
+    def pin(self, memory_id: int, *, pinned: bool = True, now: Optional[float] = None) -> bool:
+        """置顶 / 取消置顶。
+
+        置顶的记忆此后永不衰减，也不会被淘汰。
+        """
 
         mem = self.store.get(memory_id)
         if mem is None:
             return False
-        updated = apply_event(mem, MemoryEvent.PIN, now=float(now or time.time()), policy=self.policy)
+        ts = float(now or time.time())
+        if pinned:
+            updated = apply_event(mem, MemoryEvent.PIN, now=ts, policy=self.policy)
+        else:
+            # 取消置顶：回到普通衰减（档位重新按强度算）。
+            updated = replace(mem, pinned=False, updated_at=ts)
+            updated.status = resolve_status(updated, ts, self.policy)
         self.store.update(updated, fts_text(updated.content))
         return True
 

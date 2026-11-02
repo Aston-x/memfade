@@ -263,6 +263,18 @@ class FakeCtx:
         self.paths = FakePaths(base)
         self.llm = FakeLLM(llm_reply)
         self.maisaka = FakeMaisaka()
+        self.send = FakeSend()
+
+
+class FakeSend:
+    """假发送通道——命令要往会话里回话。"""
+
+    def __init__(self):
+        self.sent: List[Any] = []
+
+    async def text(self, text: str, stream_id: str = "", **kwargs):
+        self.sent.append((text, stream_id))
+        return {"success": True}
 
 
 def make_message(text: str, *, group_id: str = "", user_id: str = "1738157278", session_id: str = "sess-1"):
@@ -369,6 +381,26 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(engine.store.count("qq:session:sess-1"), 1)
         mem = engine.store.iter_scope("qq:session:sess-1")[0]
         self.assertIsNotNone(mem.embedding, "抽出来的记忆没有向量，向量检索等于没开")
+
+    async def test_pin_command_marks_memory(self):
+        """「/记忆 置顶 <内容>」要把那条置顶（此后永不淡化）。"""
+
+        plugin = self.plugin
+        plugin._ctx.llm.reply = (
+            '[{"content":"许杏玖喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+        )
+        await plugin.handle_after_process(message=make_message("我喜欢辣的"))
+        engine = plugin._engine
+        before = engine.store.iter_scope("qq:session:sess-1")[0]
+        self.assertFalse(before.pinned)
+
+        await plugin.cmd_memory(
+            stream_id="sess-1",
+            matched_groups={"action": "置顶", "query": "辣的食物"},
+        )
+        after = engine.store.get(before.id)
+        self.assertTrue(after.pinned, "置顶命令没生效")
 
     async def test_scope_parsing_private(self):
         from adapters.maibot.plugin import MemFadePlugin

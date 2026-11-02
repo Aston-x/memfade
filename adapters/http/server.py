@@ -166,6 +166,43 @@ class MemFadeHTTPService:
         report = self._run_async(self.engine.consolidate(scope))
         return {"ok": True, "report": report.as_dict()}
 
+    def forget(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """忘掉一条记忆（按 id 或按内容片段）。"""
+
+        scope = _scope_from(payload)
+        memory_id = payload.get("id")
+        if memory_id:
+            ok = self.engine.forget(int(memory_id))
+            return {"ok": bool(ok), "forgotten": int(memory_id) if ok else None}
+        content = str(payload.get("content") or "").strip()
+        if not content:
+            return {"ok": False, "error": "要给 id 或 content"}
+        hits = self.engine.recall(content, scope, top_k=5, require_match=True)
+        if not hits:
+            return {"ok": False, "error": "没找到"}
+        target = hits[0].memory
+        self.engine.forget(target.id)
+        return {"ok": True, "forgotten": target.id, "content": target.content}
+
+    def pin(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """置顶/取消置顶一条记忆（置顶的不参与衰减与淘汰）。"""
+
+        scope = _scope_from(payload)
+        memory_id = payload.get("id")
+        pinned = bool(payload.get("pinned", True))
+        if memory_id:
+            ok = self.engine.pin(int(memory_id), pinned=pinned)
+            return {"ok": bool(ok), "id": int(memory_id), "pinned": pinned}
+        content = str(payload.get("content") or "").strip()
+        if not content:
+            return {"ok": False, "error": "要给 id 或 content"}
+        hits = self.engine.recall(content, scope, top_k=5, require_match=True)
+        if not hits:
+            return {"ok": False, "error": "没找到"}
+        target = hits[0].memory
+        ok = self.engine.pin(target.id, pinned=pinned)
+        return {"ok": bool(ok), "id": target.id, "pinned": pinned, "content": target.content}
+
     def stats(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         scope = _scope_from(payload) if payload.get("scope") else None
         return {"ok": True, "stats": self.engine.stats(scope)}
@@ -260,6 +297,10 @@ class MemFadeHandler(BaseHTTPRequestHandler):
                 self._send(200, self.service.context(payload))
             elif path == "/consolidate":
                 self._send(200, self.service.consolidate(payload))
+            elif path == "/forget":
+                self._send(200, self.service.forget(payload))
+            elif path == "/pin":
+                self._send(200, self.service.pin(payload))
             else:
                 self._send(404, {"ok": False, "error": "not found"})
         except Exception as exc:
