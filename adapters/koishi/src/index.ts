@@ -180,21 +180,20 @@ export class MemoryService {
     if (count % Math.max(1, this.config.extractEveryN) !== 0) return
     this.buffer.set(key, [])
     // 有 LLM 就走抽取：把整句话提炼成「关于这个人的事实」。
-    // 原样写入等于把聊天记录塞进记忆库——那是备份，不是记忆。
+    // ⚠ **绝不原样写入**：那等于把聊天记录塞进记忆库——那是备份，不是记忆，
+    // 也是记忆污染最直接的来源（主人引用机器人时，整段原话会进库）。
+    // 侧车没配 LLM 时会用规则抽取兜底；真写不进去就什么都不写。
     const speaker = String(session?.author?.name ?? session?.author?.nickname ?? '').trim()
     try {
       const result = await this.request('/extract', {
         scope,
         messages: list.map((content) => ({ role: 'user', content, speaker })),
       })
-      if (result?.llm) return
     } catch (error) {
-      // 老侧车没有 /extract，或者没配 LLM——退回原样写入。
+      // 老侧车没有 /extract 这条路——那就不写。
+      // 宁可少记，也不要把整句聊天记录当记忆存进去。
+      this.ctx.logger('memfade').warn(`抽取失败：${(error as Error).message}`)
     }
-    await this.request('/remember', {
-      scope,
-      drafts: list.map((content) => ({ content, importance: 0.5 })),
-    })
   }
 
   async start() {

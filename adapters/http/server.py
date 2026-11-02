@@ -165,16 +165,6 @@ class MemFadeHTTPService:
                 messages.append(entry)
         if not messages:
             return {"ok": True, "written": 0, "ids": [], "note": "没有可抽取的消息"}
-        if self.engine.llm is None:
-            # 没配 LLM就别硬抽：规则抽取会把整句话原样当事实存下来，
-            # 那不如让调用方自己决定要不要原样写入。
-            return {
-                "ok": True,
-                "written": 0,
-                "ids": [],
-                "llm": False,
-                "note": "侧车没配 LLM，只能原样写入",
-            }
         written = self._run_async(
             self.engine.remember_from_messages(
                 messages,
@@ -182,7 +172,18 @@ class MemFadeHTTPService:
                 source=str(payload.get("source") or "http-extract"),
             )
         )
-        return {"ok": True, "written": len(written), "ids": [m.id for m in written], "llm": True}
+        # mode 说明这批记忆是怎么来的：
+        # - llm   模型抽的；
+        # - rules 没配 LLM 时的规则兜底（**不是**把原话整句存进去）。
+        # 调用方据此决定要不要退回到「原样写入」——
+        # 而原样写入就是把聊天记录当记忆库，那是污染，不是记忆。
+        return {
+            "ok": True,
+            "written": len(written),
+            "ids": [m.id for m in written],
+            "llm": self.engine.llm is not None,
+            "mode": "llm" if self.engine.llm is not None else "rules",
+        }
 
     def recall(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         scope = _scope_from(payload)

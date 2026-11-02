@@ -152,7 +152,7 @@ describe('memfade koishi 插件', () => {
     )
   })
 
-  it('侧车没配 LLM 时，抽取退回原样写入而不是报错', async () => {
+  it('侧车没配 LLM 时也不把原话整句写进记忆库', async () => {
     const service = new MemoryService({ logger: () => undefined }, {
       endpoint: ENDPOINT,
       token: '',
@@ -165,8 +165,11 @@ describe('memfade koishi 插件', () => {
     // 走的是 middleware 之外的 collect：直接调它，
     // 因为 middleware 需要完整的 Koishi 运行时。
     await service.collect?.(session, content)
-    const ctx = await service.context(session, '原样写入')
-    assert.ok(ctx.text.includes(content), '没配 LLM 时应该退回 /remember 原样写入')
+    const recent = await service.list(session, 8)
+    assert.ok(
+      !recent.some((m) => m.content === content),
+      '原话不该整句进库——那是聊天记录备份，不是记忆',
+    )
   })
 })
 
