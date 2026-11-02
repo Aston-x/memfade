@@ -160,6 +160,32 @@ class TestAtomicWrite(unittest.TestCase):
         self.assertEqual(written[0].content, "许杏玖喜欢辣的食物")
         self.assertEqual(written[0].subject, "")
 
+    async def test_extracted_memory_records_where_it_came_from(self):
+        """抽出来的记忆要记下出处（模型不会填 source）。"""
+
+        class _FakeExtractor:
+            async def extract(self, messages, source=""):
+                from memfade.extract import ExtractionResult
+
+                return ExtractionResult(
+                    drafts=[MemoryDraft(content="许杏玖喜欢辣的食物", importance=0.9)]
+                )
+
+        engine, path, config = temp_engine()
+        try:
+            engine.extractor = _FakeExtractor()
+            scope = Scope(platform="qq", chat_type="session", chat_id="s1")
+            written = await engine.remember_from_messages(
+                [{"role": "user", "content": "我喜欢辣的"}], scope, source="qq:session:s1"
+            )
+            self.assertEqual(len(written), 1)
+            self.assertEqual(written[0].source, "qq:session:s1")
+        finally:
+            engine.close()
+            for suffix in ("", "-wal", "-shm"):
+                if os.path.exists(path + suffix):
+                    os.remove(path + suffix)
+
 
 class TestGist(unittest.IsolatedAsyncioTestCase):
     async def test_llm_gist(self):

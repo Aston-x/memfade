@@ -238,6 +238,12 @@ class MemoryEngine:
         result = await self.extractor.extract(messages, source=source)
         if not result.drafts:
             return []
+        # 记下出处：模型不会填 source（提示词里没这项），
+        # 不补上的话这条记忆就是「不知道从哪来的」。
+        if source:
+            for draft in result.drafts:
+                if not draft.source:
+                    draft.source = source
         written = self.remember_many(result.drafts, scope, now=now, meta=meta)
         # ⚠ 必须在这里补向量：写入路径是同步的，而宿主的嵌入服务多半是 async 的——
         # 有事件循环时同步取向量会堵住事件循环，所以同步路径只能跳过。
