@@ -42,9 +42,52 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 try:  # pragma: no cover - 取决于部署形态
-    from memfade import MemoryDraft, MemoryEngine, MemoryKind, MemFadeConfig, Scope
+    from memfade import (
+        MemoryDraft,
+        MemoryEngine,
+        MemoryKind,
+        MemFadeConfig,
+        Scope,
+        check_remember_request,
+    )
+    from memfade.textutil import split_repair_request
 except ImportError:  # pragma: no cover
-    from memfade import MemoryDraft, MemoryEngine, MemoryKind, MemFadeConfig, Scope
+    from memfade import (
+        MemoryDraft,
+        MemoryEngine,
+        MemoryKind,
+        MemFadeConfig,
+        Scope,
+        check_remember_request,
+    )
+    from memfade.textutil import split_repair_request
+
+# ⚠ **副本校验**（放在 import 之后、try 之外）：
+# 同进程里若已有别的 `memfade` 副本（另一个插件也带了一份 memfade/ 目录），
+# `sys.modules` 会直接返回那一份——问题不是版本不同，而是
+# **两份不同的类对象**：MemoryKind 是 str Enum，两份副本之间 `==` 相等
+# 但 `is` 不相等，而核心里有多处 `is MemoryKind.X` 的身份比较，
+# 会静默走错分支。
+# 宁可明确报错，也不要静默用错版本。
+#
+# 认得两条路径：适配器自带的副本，以及**开发树里的源码副本**
+# （跑测试时 `import memfade` 解析到的是仓库根目录那一份——
+# 那是同一份代码，只是另一处拷贝；见 tests/test_vendored_sync.py
+# 守着两者始终一致）。
+_memfade_module = sys.modules.get("memfade")
+_memfade_resolved = os.path.abspath(getattr(_memfade_module, "__file__", "") or "")
+_memfade_ok = {
+    os.path.join(_HERE, "memfade", "__init__.py"),
+    os.path.join(
+        os.path.dirname(os.path.dirname(_HERE)), "memfade", "__init__.py"
+    ),
+}
+if _memfade_module is None or _memfade_resolved not in _memfade_ok:
+    raise RuntimeError(
+        "memfade 核心副本解析到了别的路径（%s），拒绝以错误版本运行。"
+        "同一进程里只能有一份 memfade 副本——把另一个插件目录改名即可。"
+        % getattr(_memfade_module, "__file__", "?")
+    )
 
 
 PLUGIN_ID = "memfade.memory"
@@ -1224,36 +1267,20 @@ class MemFadePlugin(MaiBotPlugin):
             # 出错之后得有个**补救口**：主人自己改一条，
             # 比整库清空的代价小得多。
             raw = str(groups.get("query") or "").strip()
-            old = ""
-            new = ""
-            for token in ("=>", "→", "改成", "改为"):
-                if token in raw:
-                    old, _, new = raw.partition(token)
-                    break
-            old = old.strip()
-            new = new.strip()
+            old, new = split_repair_request(raw)
             if not old or not new:
                 await self.ctx.send.text(
                     "要改哪条？照这个格式发：/记忆 修正 老内容 => 新内容",
                     stream_id,
                 )
                 return True, "格式不对", 0
-            vector = await engine.embed_query(old) if old else None
-            hits = engine.recall(
-                old, scope, top_k=5, query_vector=vector, require_match=True
-            )
-            if not hits:
+            updated = await engine.repair(scope, old, new)
+            if updated is None:
                 await self.ctx.send.text("没找到要改的那条记忆。", stream_id)
                 return True, "没找到", 0
-            target = hits[0].memory
-            updated = engine.edit_memory(target.id, content=new)
-            if updated is None:
-                await self.ctx.send.text("改不了这条记忆。", stream_id)
-                return False, "改写失败", 1
-            # 内容变了，旧向量就对不上了——重算。
-            await engine.embed_memories([updated])
+            previous = str((updated.meta or {}).get("previous_content") or "")
             await self.ctx.send.text(
-                f"改好了：{target.content}\n现在记的是：{updated.content}", stream_id
+                f"改好了：{previous}\n现在记的是：{updated.content}", stream_id
             )
             return True, "已修正", 0
 
@@ -1330,6 +1357,16 @@ class MemFadePlugin(MaiBotPlugin):
         scope = self._scope_from_kwargs(kwargs)
         # 一段话塞进一条记忆，等于一颗炸弹：注入时只能截断，
         # 矛盾检测也抓不住。按标点拆成「一件事一条」再记。
+        # 主人点名要记的，只拦「临时状态/临时情绪」这种记了也没用的；
+        # 主语范围（focus_subjects）不拦——那是主人自己的判断。
+        verdict = check_remember_request(
+            MemoryDraft(content=content, kind=MemoryKind.SEMANTIC, importance=0.95),
+            focus_subjects=(),
+            self_names=_self_names(self),
+        )
+        if verdict.action == "drop":
+            await self.ctx.send.text("这个记不住：%s。" % verdict.reason, stream_id)
+            return True, "没记下来", 0
         draft = MemoryDraft(
             content=content,
             kind=MemoryKind.SEMANTIC,
@@ -1436,6 +1473,28 @@ class MemFadePlugin(MaiBotPlugin):
             cross_scope=bool(self.config.memory.cross_session),
             source="tool",
         )
+        # ⚠ **工具路径也必须过闸门**。
+        # 抽取那一整套纪律（主语纪律 + 时效/过度概括/临时状态）只管 LLM 抽取，
+        # 模型自己调「记住」工具时是**另一条路**——不拦的话，
+        # 一句游戏数据就能被当成「关于某个人的稳定事实」记进去
+        # （实测漏过一条：主语还是群里另一个人）。
+        verdict = check_remember_request(
+            draft,
+            focus_subjects=self.config.memory.focus_subjects,
+            self_names=_self_names(self),
+        )
+        if verdict.action == "drop":
+            return {
+                "name": "remember_something",
+                "content": "没记下来：%s（这条不值得长期记住）" % verdict.reason,
+            }
+        if verdict.action == "downgrade":
+            draft.kind = MemoryKind.EPISODIC
+        # 依据原话：模型是在这轮对话里决定要记的，把用户那句话留下来，
+        # 事后能看出「这条是从哪句话来的」。
+        quote = str(self._parse_message(kwargs.get("message")).get("text") or "").strip()
+        if quote:
+            draft.meta = {**dict(draft.meta or {}), "quote": quote[:120]}
         written = engine.remember_atomic(draft, scope)
         if not written:
             return {"name": "remember_something", "content": "没记下来（内容不重要或与已有记忆重复）"}

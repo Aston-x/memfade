@@ -368,3 +368,53 @@ def guard_drafts(
             draft = replace(draft, meta=meta)
         kept.append(draft)
     return kept, dropped
+
+
+def check_remember_request(
+    draft: MemoryDraft,
+    *,
+    focus_subjects: Sequence[str] = (),
+    self_names: Sequence[str] = (),
+) -> Verdict:
+    """判断「有人明确要求记住」这条请求能不能入库。
+
+    与抽取路径的区别：抽取出来的候选是模型**自作主张**的，
+    这里的条目是**有人点名要记**的——所以只拦两类：
+
+    1. **临时状态与临时情绪**：记了也没用（「暂时发不了」「好累」）；
+    2. **不是关于该记的那个人**：主语不是、内容里也没提到——
+       这条跟「要记的人」无关，多半是模型把别处的信息塞进来了。
+
+    注意第 2 条的判定：**主语是机器人自己不一定该丢**。
+    「许杏玖欠季怡半首歌」这种**承诺**是该记的——
+    它虽然主语是机器人，说的却是关于季怡的事。
+    所以判据是「跟那个人有没有关系」，不是「主语是不是那个人」。
+
+    为什么这条闸门必须存在（实测漏过一条）：
+    模型调用「记住」工具时，工具路径**不经过抽取那一整套纪律**，
+    于是「不吃肥肠有0+0姬子启行、0+0星期日……」这种游戏数据
+    被当成「关于某个人的稳定事实」记了进去（主语还是群里另一个人）。
+    """
+
+    content = draft.content or ""
+    if not content.strip():
+        return Verdict("drop", "内容是空的")
+    if _has(content, MOOD_MARKERS):
+        return Verdict("drop", "临时情绪不入库")
+    if _has(content, TRANSIENT_MARKERS):
+        return Verdict("drop", "临时状态不入库")
+
+    subject = (draft.subject or "").strip()
+    focus_set = {str(s).strip() for s in focus_subjects if str(s).strip()}
+    if focus_set:
+        about_focus = any(name and name in content for name in focus_set)
+        if subject in focus_set:
+            about_focus = True
+        if not about_focus:
+            return Verdict("drop", "跟要记的那个人没关系")
+    elif self_names:
+        # 没配 focus_subjects 时，至少别记机器人自己的事。
+        self_set = {str(s).strip() for s in self_names if str(s).strip()}
+        if subject and subject in self_set:
+            return Verdict("drop", "机器人自己的事不入库")
+    return Verdict("keep")

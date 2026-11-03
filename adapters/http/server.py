@@ -249,6 +249,28 @@ class MemFadeHTTPService:
         ok = self.engine.pin(target.id, pinned=pinned)
         return {"ok": bool(ok), "id": target.id, "pinned": pinned, "content": target.content}
 
+    def repair(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """改掉记错的那条记忆。
+
+        抽取难免出错（把「今天」写成「每天」）。出错之后得有个补救口——
+        自己改一条，比整库清空的代价小得多。
+        """
+
+        scope = _scope_from(payload)
+        old = str(payload.get("old") or payload.get("content") or "").strip()
+        new = str(payload.get("new") or "").strip()
+        if not old or not new:
+            return {"ok": False, "error": "要给 old 与 new"}
+        updated = self._run_async(self.engine.repair(scope, old, new))
+        if updated is None:
+            return {"ok": False, "error": "没找到"}
+        return {
+            "ok": True,
+            "id": updated.id,
+            "content": updated.content,
+            "previous": str((updated.meta or {}).get("previous_content") or ""),
+        }
+
     def stats(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         scope = _scope_from(payload) if payload.get("scope") else None
         return {"ok": True, "stats": self.engine.stats(scope)}
@@ -380,6 +402,8 @@ class MemFadeHandler(BaseHTTPRequestHandler):
                 self._send(200, self.service.forget(payload))
             elif path == "/pin":
                 self._send(200, self.service.pin(payload))
+            elif path == "/repair":
+                self._send(200, self.service.repair(payload))
             elif path == "/list":
                 self._send(200, self.service.list_memories(payload))
             elif path == "/stats":

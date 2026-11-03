@@ -21,6 +21,7 @@ forget_cmd = on_regex(r"^忘掉\s*(?P<content>.+)$")
 query_cmd = on_regex(r"^记忆(?:\s+搜\s*(?P<query>.+))?$")
 maintain_cmd = on_regex(r"^记忆\s*整理$")
 pin_cmd = on_regex(r"^记忆\s*(?P<action>置顶|取消置顶)\s*(?P<query>.+)$")
+repair_cmd = on_regex(r"^记忆\s*修正\s*(?P<query>.+)$")
 stats_cmd = on_regex(r"^记忆$")
 
 _extract_tasks: set = set()
@@ -135,6 +136,23 @@ async def handle_pin(matcher: Matcher, event) -> None:
     engine.pin(target.id, pinned=(action == "置顶"))
     verb = "置顶了" if action == "置顶" else "取消置顶了"
     await matcher.finish(f"{verb}：{target.content}")
+
+
+@repair_cmd.handle()
+async def handle_repair(matcher: Matcher, event) -> None:
+    """改掉记错的那条记忆（记忆 修正 老内容 => 新内容）。"""
+
+    from memfade import split_repair_request
+
+    raw = str(matcher.get("query") or "").strip()
+    old, new = split_repair_request(raw)
+    if not old or not new:
+        await matcher.finish("要改哪条？照这个格式发：记忆 修正 老内容 => 新内容")
+    updated = await engine.repair(scope_of(event), old, new)
+    if updated is None:
+        await matcher.finish("没找到要改的那条记忆。")
+    previous = str((updated.meta or {}).get("previous_content") or "")
+    await matcher.finish(f"改好了：{previous}\n现在记的是：{updated.content}")
 
 
 @stats_cmd.handle()

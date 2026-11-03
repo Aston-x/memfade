@@ -379,6 +379,46 @@ class TestEditMemory(unittest.TestCase):
         mid = self._remember("季怡每天只有一节课")
         self.assertIsNone(self.engine.edit_memory(mid, content="   "))
 
+    def test_repair_finds_by_content_and_rewrites(self):
+        """`记忆 修正 老内容 => 新内容` 走的那条路。"""
+
+        import asyncio
+
+        from memfade import split_repair_request
+
+        mid = self._remember("季怡每天只有一节课")
+        updated = asyncio.run(
+            self.engine.repair(self.scope, "每天只有一节课", "季怡今天只有一节课")
+        )
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated.content, "季怡今天只有一节课")
+        self.assertEqual(updated.meta.get("previous_content"), "季怡每天只有一节课")
+        self.assertIsNotNone(self.engine.store.get(mid))
+
+    def test_repair_needs_both_halves(self):
+        import asyncio
+
+        self._remember("季怡每天只有一节课")
+        updated = asyncio.run(
+            self.engine.repair(self.scope, "每天只有一节课", "")
+        )
+        self.assertIsNone(updated)
+
+    def test_repair_request_splitting(self):
+        from memfade import split_repair_request
+
+        self.assertEqual(
+            split_repair_request("老内容 => 新内容"), ("老内容", "新内容")
+        )
+        self.assertEqual(
+            split_repair_request("老内容 → 新内容"), ("老内容", "新内容")
+        )
+        self.assertEqual(
+            split_repair_request("老内容 改成 新内容"), ("老内容", "新内容")
+        )
+        # 拆不出来时第二段为空——调用方据此提示补格式，别自己猜。
+        self.assertEqual(split_repair_request("只有老内容"), ("只有老内容", ""))
+
     def test_episodic_below_general_threshold_is_kept(self):
         from memfade import MemoryDraft, MemoryKind
 

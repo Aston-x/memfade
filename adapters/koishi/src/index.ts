@@ -168,6 +168,16 @@ export class MemoryService {
     return result
   }
 
+  /** 改掉记错的那条记忆（老内容 => 新内容）。 */
+  async repair(session: any, old: string, next: string) {
+    const result = await this.request('/repair', {
+      scope: this.scopeOf(session),
+      old,
+      new: next,
+    })
+    return result
+  }
+
   /** 送去抽取。 */
   private async collect(session: any, text: string) {
     const scope = this.scopeOf(session)
@@ -240,7 +250,7 @@ export const apply = (ctx: Context, config: MemFadeConfig) => {
 }
 
 /**
- * 指令：查状态、检索、整理、置顶、记住、忘掉。
+ * 指令：查状态、检索、整理、置顶、修正、记住、忘掉。
  *
  * 只给数字（「记住了 12 条」）没人能判断记忆库干不干净——
  * 得**看得见具体内容**才知道有没有记错东西。
@@ -291,6 +301,19 @@ function registerCommands(ctx: Context, config: MemFadeConfig) {
     const target = await service.pin(session, content)
     if (!target) return '没找到相关的记忆。'
     return `置顶了：${target.content}`
+  })
+
+  ctx.command('记忆.修正 <query>').action(async ({ session }, query: string) => {
+    const raw = String(query ?? '').trim()
+    const separator = ['=>', '→', '改成', '改为'].find((token) => raw.includes(token))
+    if (!separator) return '要改哪条？照这个格式发：记忆.修正 老内容 => 新内容'
+    const index = raw.indexOf(separator)
+    const old = raw.slice(0, index).trim()
+    const next = raw.slice(index + separator.length).trim()
+    if (!old || !next) return '要改哪条？照这个格式发：记忆.修正 老内容 => 新内容'
+    const result = await service.repair(session, old, next)
+    if (!result?.ok) return '没找到要改的那条记忆。'
+    return `改好了：${result.previous ?? ''}\n现在记的是：${result.content ?? ''}`
   })
 
   ctx.command('记住 <content>').action(async ({ session }, content: string) => {

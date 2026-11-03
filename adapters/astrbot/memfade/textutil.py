@@ -175,6 +175,26 @@ def split_sentences(text: str) -> list[str]:
     return [p for p in parts if p]
 
 
+# 改记忆的指令长什么样：「老内容 => 新内容」。
+# 五个适配器都要认这套写法，分隔符放在一处，别各写各的。
+REPAIR_SEPARATORS = ("=>", "→", "改成", "改为")
+
+
+def split_repair_request(text: str) -> tuple[str, str]:
+    """把「老内容 => 新内容」拆成两段。
+
+    拆不出来时第二段是空串——调用方据此提示用户补格式，
+    别自己猜「后半段就是新内容」。
+    """
+
+    raw = (text or "").strip()
+    for token in REPAIR_SEPARATORS:
+        if token in raw:
+            old, _, new = raw.partition(token)
+            return old.strip(), new.strip()
+    return raw, ""
+
+
 def truncate(text: str, limit: int, ellipsis: str = "…") -> str:
     """按字符截断。"""
 

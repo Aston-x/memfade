@@ -30,6 +30,27 @@ from memfade.engine import MemoryEngine  # noqa: E402
 from memfade.embedding import HttpEmbeddingClient  # noqa: E402
 from memfade.llm import HttpLLMClient  # noqa: E402
 
+# ⚠ **副本校验**：同进程里若已有别的 `memfade` 副本，`sys.modules`
+# 会直接返回那一份——两份副本的 MemoryKind 是**不同的类对象**
+# （`==` 相等但 `is` 不相等），而核心里有多处 `is MemoryKind.X` 的身份比较，
+# 会静默走错分支。宁可明确报错，也不要静默用错版本。
+# 认得两条：适配器自带的副本 + 开发树里的源码副本（跑测试时用）。
+_memfade_module = sys.modules.get("memfade")
+_memfade_resolved = os.path.abspath(getattr(_memfade_module, "__file__", "") or "")
+_memfade_here = os.path.dirname(os.path.abspath(__file__))
+_memfade_ok = {
+    os.path.join(_memfade_here, "memfade", "__init__.py"),
+    os.path.join(
+        os.path.dirname(os.path.dirname(_memfade_here)), "memfade", "__init__.py"
+    ),
+}
+if _memfade_module is None or _memfade_resolved not in _memfade_ok:
+    raise RuntimeError(
+        "memfade 核心副本解析到了别的路径（%s），拒绝以错误版本运行。"
+        "同一进程里只能有一份 memfade 副本。"
+        % getattr(_memfade_module, "__file__", "?")
+    )
+
 
 def build_config(raw: Dict[str, Any]) -> MemFadeConfig:
     """把插件配置翻译成核心配置。"""

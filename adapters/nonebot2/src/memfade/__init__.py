@@ -35,12 +35,21 @@ from .decay import (
 from .embedding import CallableEmbeddingClient, EmbeddingClient, HttpEmbeddingClient, NullEmbeddingClient
 from .engine import MemoryEngine
 from .extract import MemoryExtractor
+from .guards import (
+    Evidence,
+    Verdict,
+    check_draft,
+    check_remember_request,
+    find_evidence,
+    guard_drafts,
+)
 from .llm import CallableLLMClient, HttpLLMClient, LLMClient
 from .retrieve import MemoryContext, MemoryRetriever
 from .store import MemoryStore
+from .textutil import split_repair_request
 from .types import Memory, MemoryDraft, MemoryKind, MemoryStatus, RetrievalHit, Scope
 
-__version__ = "0.1.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "CallableEmbeddingClient",
@@ -50,6 +59,7 @@ __all__ = [
     "DEFAULT_POLICY",
     "DEFAULT_PROFILES",
     "EmbeddingClient",
+    "Evidence",
     "FadePolicy",
     "HttpEmbeddingClient",
     "HttpLLMClient",
@@ -69,11 +79,17 @@ __all__ = [
     "NullEmbeddingClient",
     "RetrievalHit",
     "Scope",
+    "Verdict",
     "apply_event",
+    "check_draft",
+    "check_remember_request",
     "decay_curve",
     "effective_strength",
+    "find_evidence",
+    "guard_drafts",
     "next_review_days",
     "resolve_status",
+    "split_repair_request",
     "stability_days",
 ]
 

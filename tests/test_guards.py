@@ -10,6 +10,7 @@ import unittest
 
 from memfade.guards import (
     check_draft,
+    check_remember_request,
     find_evidence,
     guard_drafts,
 )
@@ -218,6 +219,82 @@ class TestDropRules(unittest.TestCase):
 
         draft = MemoryDraft(content="季怡住在杭州", kind=MemoryKind.SEMANTIC, importance=0.8)
         verdict = check_draft(draft)
+        self.assertEqual(verdict.action, "keep")
+
+
+class TestRememberRequest(unittest.TestCase):
+    """「记住」请求的闸门：模型自己决定要记什么的那条路。
+
+    这条路**不经过抽取那一整套纪律**——不设闸门就会漏。
+    实测漏过一条：模型把一句游戏数据
+    （「不吃肥肠有0+0姬子启行、0+0星期日……」）当成
+    「关于群里某个人的稳定事实」记了进去。
+    """
+
+    def test_game_stats_about_another_person_is_dropped(self):
+        draft = MemoryDraft(
+            content="不吃肥肠有0+0姬子启行、0+0星期日、0+0缇宝、0+1花火、1+1符玄",
+            kind=MemoryKind.SEMANTIC,
+            importance=0.8,
+            subject="不吃肥肠",
+        )
+        verdict = check_remember_request(draft, focus_subjects=["季怡"])
+        self.assertEqual(verdict.action, "drop")
+        self.assertIn("跟要记的那个人没关系", verdict.reason)
+
+    def test_content_without_the_focus_subject_is_dropped(self):
+        draft = MemoryDraft(content="今天群里在打牌", kind=MemoryKind.EPISODIC)
+        verdict = check_remember_request(draft, focus_subjects=["季怡"])
+        self.assertEqual(verdict.action, "drop")
+
+    def test_about_the_right_person_is_kept(self):
+        draft = MemoryDraft(
+            content="季怡答应周末一起去图书馆",
+            kind=MemoryKind.SEMANTIC,
+            importance=0.8,
+            subject="季怡",
+        )
+        verdict = check_remember_request(draft, focus_subjects=["季怡"])
+        self.assertEqual(verdict.action, "keep")
+
+    def test_robot_own_facts_are_dropped(self):
+        draft = MemoryDraft(
+            content="许杏玖欠季怡半首歌",
+            kind=MemoryKind.SEMANTIC,
+            subject="许杏玖",
+        )
+        # ⚠ 承诺类不该被误杀：主语是机器人，说的却是关于季怡的事。
+        verdict = check_remember_request(draft, focus_subjects=["季怡"])
+        self.assertEqual(verdict.action, "keep")
+
+    def test_robot_own_facts_are_dropped_without_focus_config(self):
+        draft = MemoryDraft(
+            content="许杏玖最喜欢辣的食物",
+            kind=MemoryKind.PREFERENCE,
+            subject="许杏玖",
+        )
+        verdict = check_remember_request(draft, self_names=["许杏玖"])
+        self.assertEqual(verdict.action, "drop")
+
+    def test_transient_state_is_dropped(self):
+        draft = MemoryDraft(content="季怡现在发不了图", kind=MemoryKind.EPISODIC)
+        verdict = check_remember_request(draft)
+        self.assertEqual(verdict.action, "drop")
+
+    def test_empty_content_is_dropped(self):
+        draft = MemoryDraft(content="   ", kind=MemoryKind.SEMANTIC)
+        verdict = check_remember_request(draft)
+        self.assertEqual(verdict.action, "drop")
+
+    def test_no_focus_config_means_no_subject_restriction(self):
+        """没配 focus_subjects 时，不该拦别人的事——那是部署方的选择。"""
+
+        draft = MemoryDraft(
+            content="不吃肥肠今天赢了比赛",
+            kind=MemoryKind.EPISODIC,
+            subject="不吃肥肠",
+        )
+        verdict = check_remember_request(draft)
         self.assertEqual(verdict.action, "keep")
 
 

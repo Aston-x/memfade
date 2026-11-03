@@ -679,6 +679,49 @@ class MemoryEngine:
 
         return await self.consolidator.run(scope.key() if scope else None, now=now)
 
+    async def repair(
+        self,
+        scope: Scope,
+        old: str,
+        new: str,
+        *,
+        top_k: int = 5,
+        now: Optional[float] = None,
+    ) -> Optional[Memory]:
+        """把一条记错的记忆改成新的内容。
+
+        为什么要有这个动作：抽取难免出错（把「今天」写成「每天」、
+        把一次性的吩咐写成长期偏好）。出错之后总得有人收拾——
+        主人自己改一条，比整库清空的代价小得多。
+
+        怎么找到「那条」：按内容片段检索，**必须真命中**
+        （不掺「最近写入但无关的记忆」，否则改错对象更糟）。
+        旧内容留在 ``meta["previous_content"]`` 里，事后可查。
+        """
+
+        old_text = (old or "").strip()
+        new_text = (new or "").strip()
+        if not old_text or not new_text:
+            return None
+        vector = await self.embed_query(old_text)
+        hits = self.recall(
+            old_text, scope, top_k=max(1, int(top_k)), query_vector=vector, require_match=True
+        )
+        if not hits:
+            return None
+        target = hits[0].memory
+        updated = self.edit_memory(
+            target.id,
+            content=new_text,
+            meta_patch={"previous_content": target.content},
+            now=now,
+        )
+        if updated is None:
+            return None
+        # 内容变了，旧向量就对不上了——重算。
+        await self.embed_memories([updated])
+        return updated
+
     def stats(self, scope: Optional[Scope] = None) -> dict:
         """状态统计。"""
 

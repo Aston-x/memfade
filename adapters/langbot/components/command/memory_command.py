@@ -1,7 +1,7 @@
 """memfade · LangBot 指令组件。
 
 事件监听器负责「注入与抽取」，这里负责「让人能自己看、自己改」：
-查状态、搜、整理、置顶、记住、忘掉。
+查状态、搜、整理、置顶、修正、记住、忘掉。
 
 指令走 LangBot 的 Command 组件（``@Command.subcommand``），
 返回用 ``context.CommandReturn``。
@@ -15,7 +15,7 @@ from typing import Any, AsyncGenerator
 from langbot_plugin.api.definition.components.command.command import Command
 from langbot_plugin.api.entities.builtin.command.context import CommandReturn, ExecuteContext
 
-from memfade import Scope
+from memfade import Scope, split_repair_request
 from memfade.types import MemoryDraft, MemoryKind
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,11 @@ class MemoryCommand(Command):
         self.subcommand("置顶", help="让一条记忆永不淡化", usage="记忆 置顶 <内容片段>")(
             MemoryCommand.pin
         )
+        self.subcommand(
+            "修正",
+            help="改掉记错的那条（老内容 => 新内容）",
+            usage="记忆 修正 老内容 => 新内容",
+        )(MemoryCommand.repair)
         self.subcommand("记住", help="显式记住一件事", usage="记住 <内容>")(
             MemoryCommand.remember
         )
@@ -160,6 +165,29 @@ class MemoryCommand(Command):
         target = hits[0].memory
         self.engine.pin(target.id, pinned=True)
         yield CommandReturn(text="置顶了：%s" % target.content)
+
+    async def repair(
+        self, ctx: ExecuteContext
+    ) -> AsyncGenerator[CommandReturn, None]:
+        """改掉记错的那条记忆。
+
+        抽取难免出错（把「今天」写成「每天」）。出错之后得有个补救口——
+        主人自己改一条，比整库清空的代价小得多。
+        """
+
+        raw = (getattr(ctx, "command_text", "") or "").strip()
+        old, new = split_repair_request(raw)
+        if not old or not new:
+            yield CommandReturn(
+                text="要改哪条？照这个格式发：记忆 修正 老内容 => 新内容"
+            )
+            return
+        updated = await self.engine.repair(self._scope(ctx), old, new)
+        if updated is None:
+            yield CommandReturn(text="没找到要改的那条记忆。")
+            return
+        previous = str((updated.meta or {}).get("previous_content") or "")
+        yield CommandReturn(text="改好了：%s\n现在记的是：%s" % (previous, updated.content))
 
     async def remember(
         self, ctx: ExecuteContext
