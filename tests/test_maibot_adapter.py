@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 from typing import Any, Dict, List
 
+from tests.helpers import temp_dir
 from memfade.types import MemoryDraft, MemoryKind, Scope
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -189,7 +190,7 @@ class TestHostItemCompatibility(unittest.IsolatedAsyncioTestCase):
         from adapters.maibot.plugin import MemFadePlugin, MemFadePluginConfig
 
         plugin = MemFadePlugin()
-        plugin._ctx = FakeCtx(Path(tempfile.mkdtemp(prefix="memfade-host-")), "[]")
+        plugin._ctx = FakeCtx(Path(temp_dir("memfade-host-")), "[]")
         config = MemFadePluginConfig()
         config.plugin.enabled = True
         config.memory.min_importance = 0.1
@@ -379,7 +380,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from adapters.maibot.plugin import MemFadePlugin, MemFadePluginConfig
 
-        self.tmp = tempfile.mkdtemp(prefix="memfade-adapter-")
+        self.tmp = temp_dir("memfade-adapter-")
         self.plugin = MemFadePlugin()
         self.plugin._ctx = FakeCtx(Path(self.tmp), "[]")
         config = MemFadePluginConfig()

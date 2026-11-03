@@ -15,6 +15,8 @@ import os
 import re
 import unittest
 
+from tests.helpers import temp_dir
+
 ADAPTER_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "adapters", "astrbot"
 )
@@ -134,7 +136,7 @@ class TestConfigMapping(unittest.TestCase):
         from adapters.astrbot.main import MemFadePlugin
 
         cfg = dict(raw)
-        cfg.setdefault("db_path", os.path.join(tempfile.mkdtemp(prefix="memfade-cfg-"), "m.db"))
+        cfg.setdefault("db_path", os.path.join(temp_dir("memfade-cfg-"), "m.db"))
         plugin = MemFadePlugin(context=None, config=cfg)
         self.addCleanup(plugin.engine.close)
         return plugin

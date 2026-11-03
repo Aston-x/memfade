@@ -12,6 +12,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from tests.helpers import temp_dir
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ADAPTER_SRC = REPO_ROOT / "adapters" / "nonebot2" / "src"
 if str(ADAPTER_SRC) not in sys.path:
@@ -57,7 +59,7 @@ class TestNoneBotAdapter(unittest.IsolatedAsyncioTestCase):
         from nonebot_plugin_memfade import core as core_module
 
         self.core = core_module
-        self.tmp = tempfile.mkdtemp(prefix="memfade-nonebot-")
+        self.tmp = temp_dir("memfade-nonebot-")
         # 让引擎落到临时目录，别污染用户数据
         core_module.config.memfade_db_path = os.path.join(self.tmp, "memfade.db")
         core_module.engine.close()

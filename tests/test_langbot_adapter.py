@@ -13,6 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.helpers import temp_dir
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -94,7 +96,7 @@ class TestLangBotCommands(unittest.IsolatedAsyncioTestCase):
         from memfade import MemFadeConfig
         from memfade.engine import MemoryEngine
 
-        self.tmp = tempfile.mkdtemp(prefix="memfade-langbot-cmd-")
+        self.tmp = temp_dir("memfade-langbot-cmd-")
         config = MemFadeConfig.from_dict(
             {
                 "storage": {"db_path": os.path.join(self.tmp, "memfade.db"), "enable_vector": False},
@@ -193,7 +195,7 @@ class TestLangBotAdapter(unittest.IsolatedAsyncioTestCase):
         self._session_of = _session_of
         self.message_text = message_text
 
-        self.tmp = tempfile.mkdtemp(prefix="memfade-langbot-")
+        self.tmp = temp_dir("memfade-langbot-")
         plugin = MemFadePlugin()
         plugin.engine = None
         self.plugin = plugin

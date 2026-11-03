@@ -20,6 +20,8 @@ import types
 import unittest
 from pathlib import Path
 
+from tests.helpers import temp_dir
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -179,9 +181,9 @@ def _install_stubs() -> None:
 
         @staticmethod
         def get_data_dir(plugin_name=None):
-            import tempfile as _tf
+            from tests.helpers import temp_dir as _td
 
-            return _tf.mkdtemp(prefix="memfade-star-")
+            return _td("memfade-star-")
 
     class _Logger:
         def info(self, *args, **kwargs):
@@ -233,7 +235,7 @@ class TestAstrBotAdapterLogic(unittest.IsolatedAsyncioTestCase):
         from memfade import MemFadeConfig
         from memfade.engine import MemoryEngine
 
-        self.tmp = tempfile.mkdtemp(prefix="memfade-astrbot-")
+        self.tmp = temp_dir("memfade-astrbot-")
         config = MemFadeConfig.from_dict(
             {
                 "storage": {"db_path": os.path.join(self.tmp, "memfade.db"), "enable_vector": False},

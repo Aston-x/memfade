@@ -223,12 +223,16 @@ def main() -> int:
         print("[build] 目标：%s（%s）" % (deploy_dir, args.host))
 
     for name, spec in DEPLOYABLE.items():
-        if args.host and name != args.host:
-            continue
         # 工具清单按适配器裁剪：AstrBot 不发 MaiBot 专属的那两个
+        # ⚠ 这一步是**整理源码树**，跟部署到哪个宿主无关——
+        # 所以必须放在 --host 的过滤**之前**。
+        # 放后面的话，「只部署 maibot」会把 astrbot 的工具清单打乱
+        # （两个工具又冒出来），源码树跟着部署行为漂移。
         tools = spec.get("tools")
         if tools is not None:
             sync_tools(spec["source"], tools)
+        if args.host and name != args.host:
+            continue
         if args.zip:
             make_zip(spec, REPO_ROOT / "dist")
         if args.dest:

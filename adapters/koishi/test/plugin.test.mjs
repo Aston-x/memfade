@@ -58,8 +58,25 @@ describe('memfade koishi 插件', () => {
     }
   })
 
-  after(() => {
+  after(async () => {
     sidecar?.kill()
+    // 跑完把临时库也带走：不然系统临时目录里会一直躺着
+    // memfade-koishi-test.db{,-wal,-shm} 三件套。
+    // ⚠ 得等侧车真退出再删：kill() 只是发信号，进程还在时
+    // 文件被锁着，rmSync 会抛异常（被下面的空 catch 吞掉）→ 删不掉。
+    if (sidecar) {
+      await new Promise((resolve) => {
+        sidecar.once('close', resolve)
+        setTimeout(resolve, 3000)
+      })
+    }
+    for (const suffix of ['', '-wal', '-shm']) {
+      try {
+        rmSync(DB_PATH + suffix)
+      } catch {
+        // 不存在就算了
+      }
+    }
   })
 
   it('配置声明了侧车地址与令牌', () => {

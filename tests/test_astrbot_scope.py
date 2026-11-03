@@ -22,6 +22,7 @@ from adapters.astrbot.scopes import (
     resolve_write_scope,
     write_scopes,
 )
+from tests.helpers import temp_dir
 
 
 class TestScopeKeys(unittest.TestCase):
@@ -146,7 +147,7 @@ class TestIsolationProof(unittest.IsolatedAsyncioTestCase):
         from memfade.config import MemFadeConfig
         from memfade.engine import MemoryEngine
 
-        self.tmp = tempfile.mkdtemp(prefix="memfade-scope-")
+        self.tmp = temp_dir("memfade-scope-")
         config = MemFadeConfig.from_dict(
             {
                 "storage": {
