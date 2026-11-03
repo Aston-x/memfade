@@ -467,6 +467,16 @@ class MemoryEngine:
 
         return export_memories(self.store, scope.key() if scope else None)
 
+    def clear_scope(self, scope: Scope) -> int:
+        """清空某个作用域的记忆，返回清掉多少条。
+
+        为什么放在核心而不是适配器：清空是**产品动作**
+        （用户说「忘掉我们聊过的一切」），每个适配器都要有，
+        所以核心先做好，适配器只负责把它暴露成命令或按钮。
+        """
+
+        return self.store.clear_scope(scope.key())
+
     def import_memories(
         self,
         items: Sequence[dict[str, Any]],

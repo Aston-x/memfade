@@ -76,6 +76,11 @@
             }
           }
         },
+        "clear_scope": {
+          "api": "memfade_clear_scope",
+          "version": "1",
+          "confirmation": "确认清空这个会话的全部记忆？这一步不可逆。"
+        },
         "why": {
           "api": "memfade_why",
           "version": "1",
@@ -388,6 +393,12 @@
               "label": "粘贴导出的 JSON。导入会保留种类、显著性与淡化状态，重复的自动跳过。"
             }
           ]
+        },
+        {
+          "type": "button",
+          "label": "清空这个会话的记忆",
+          "action": "clear_scope",
+          "variant": "danger"
         }
       ]
     },

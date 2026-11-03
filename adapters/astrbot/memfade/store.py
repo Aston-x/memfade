@@ -631,6 +631,21 @@ class MemoryStore:
             ).fetchall()
         return [(str(r[0]), int(r[1])) for r in rows]
 
+    def clear_scope(self, scope_key: str) -> int:
+        """清空一个作用域的记忆，返回清掉多少条。
+
+        全文索引有触发器跟着主表走，删主表行索引会自动清掉。
+        """
+
+        with self._lock:
+            count = int(
+                self._conn.execute(
+                    "SELECT COUNT(*) FROM memories WHERE scope_key = ?", (scope_key,)
+                ).fetchone()[0]
+            )
+            self._conn.execute("DELETE FROM memories WHERE scope_key = ?", (scope_key,))
+            self._conn.commit()
+        return count
     def search_substring(
         self,
         terms: Sequence[str],

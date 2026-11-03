@@ -1116,8 +1116,8 @@ class MemFadePlugin(MaiBotPlugin):
         "记忆",
         description="查看记忆。/记忆 查当前会话记住的东西，/记忆 搜 <关键词>，"
         "/记忆 整理 立刻跑一轮整理，/记忆 置顶 <内容> 让它永不淡化，"
-        "/记忆 接管 看看记忆板块归谁管",
-        pattern=r"^/(?:记忆|memory)(?:\s+(?P<action>搜|search|整理|maintain|置顶|pin|取消置顶|unpin|接管|takeover|体检|check)?)?"
+        "/记忆 接管 看看记忆板块归谁管，/记忆 清空 确认 清空这个会话的记忆",
+        pattern=r"^/(?:记忆|memory)(?:\s+(?P<action>搜|search|整理|maintain|置顶|pin|取消置顶|unpin|接管|takeover|体检|check|清空|clear|wipe)?)?"
         r"(?:\s+(?P<query>.+))?$",
     )
     async def cmd_memory(self, **kwargs: Any) -> tuple:
@@ -1141,6 +1141,23 @@ class MemFadePlugin(MaiBotPlugin):
                 stream_id,
             )
             return True, "整理完成", 0
+
+        if action in ("清空", "clear", "wipe"):
+            # 破坏性操作：**必须带确认词**，而且只清当前会话。
+            confirm = str(groups.get("query") or "").strip()
+            if confirm not in ("确认", "confirm", "确定", "yes"):
+                await self.ctx.send.text(
+                    "清空记忆是不可逆的。要清空这个会话的全部记忆，请发："
+                    "/记忆 清空 确认",
+                    stream_id,
+                )
+                return True, "等待确认", 0
+            cleared = engine.clear_scope(scope)
+            await self.ctx.send.text(
+                "这个会话的记忆已清空（%d 条）。" % cleared,
+                stream_id,
+            )
+            return True, "已清空", 0
 
         if action in ("接管", "takeover", "体检", "check"):
             # 「接管」= 让 memfade 当唯一的长期记忆板块。
@@ -1793,6 +1810,25 @@ class MemFadePlugin(MaiBotPlugin):
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "count": len(rows), "memories": rows[: max(1, min(20000, int(limit)))]}
+
+    @API("memfade_clear_scope", description="清空当前会话的记忆（不可逆）", version="1")
+    async def memfade_clear_scope(self) -> Dict[str, Any]:
+        """清空当前会话的记忆。
+
+        清空是**产品动作**（「忘掉我们聊过的一切」），
+        所以放在核心、每个适配器都能暴露成命令或按钮。
+        面板上的按钮带二次确认，聊天里的命令要带「确认」两个字。
+        """
+
+        engine = self._engine
+        if engine is None:
+            return {"ok": False, "error": "引擎未就绪"}
+        try:
+            scope = self._scope_from_kwargs({})
+            cleared = engine.clear_scope(scope)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "cleared": cleared}
 
     @API("memfade_import", description="导入记忆（JSON：导出文件 / 别的机器的库）", version="1")
     async def memfade_import(self, payload: str = "", scope_id: str = "") -> Dict[str, Any]:

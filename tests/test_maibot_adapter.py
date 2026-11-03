@@ -534,6 +534,30 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         sent = " ".join(text for text, _ in plugin._ctx.send.sent)
         self.assertIn("没有别的长期记忆系统", sent)
 
+    async def test_clear_scope_needs_confirmation(self):
+        """清空记忆不可逆——命令必须带确认词，误触不能删。"""
+
+        plugin = self.plugin
+        plugin._ctx.llm.reply = (
+            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+        )
+        await plugin.handle_after_process(message=make_message("我喜欢辣的"))
+        await plugin._drain_extractions()
+        self.assertEqual(plugin._engine.store.count("qq:session:sess-1"), 1)
+
+        # 没带确认词：只提示，不删
+        await plugin.cmd_memory(
+            stream_id="sess-1", matched_groups={"action": "清空"}
+        )
+        self.assertEqual(plugin._engine.store.count("qq:session:sess-1"), 1, "没确认就删了")
+
+        # 带确认词：才清
+        await plugin.cmd_memory(
+            stream_id="sess-1", matched_groups={"action": "清空", "query": "确认"}
+        )
+        self.assertEqual(plugin._engine.store.count("qq:session:sess-1"), 0, "确认了还没清")
+
     async def test_extraction_does_not_block_the_reply(self):
         """抽取要等 LLM（实机 30~60 秒），不能挡住主人的回复。
 
