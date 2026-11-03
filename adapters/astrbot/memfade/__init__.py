@@ -49,7 +49,7 @@ from .store import MemoryStore
 from .textutil import split_repair_request
 from .types import Memory, MemoryDraft, MemoryKind, MemoryStatus, RetrievalHit, Scope
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     "CallableEmbeddingClient",

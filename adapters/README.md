@@ -53,6 +53,12 @@ Scope(platform="qq", chat_type="group", chat_id="1127155154")
 python scripts\build_plugin.py --deploy '<MaiBot>/plugins'
 ```
 
+或者让脚本自己推路径（**推荐**——不用记宿主把插件放哪）：
+
+```powershell
+python scripts\build_plugin.py --host maibot --host-root '<MaiBot根目录>'
+```
+
 详细说明见 [`maibot/README.md`](maibot/README.md)。
 
 ### LangBot
@@ -65,6 +71,15 @@ python scripts\build_plugin.py --deploy '<MaiBot>/plugins'
 
 把 `astrbot/` 放进 AstrBot 的插件目录，`metadata.yaml` 里已声明名字与版本。
 配置项见 `astrbot/_conf_schema.json`。
+
+目录名必须是合法 Python 标识符（AstrBot 以 `data.plugins.<目录名>` 导入），
+所以这里叫 `astrbot_plugin_memfade` 而不是 `memfade-plugin`——
+名字同时决定了配置文件名与数据目录，改名等于用户配置失联。
+用脚本部署可以一次对齐这几处：
+
+```powershell
+python scripts\build_plugin.py --host astrbot --host-root '<AstrBot安装目录>'
+```
 
 ### NoneBot2
 
@@ -110,8 +125,22 @@ cd adapters/koishi && npm install && npm run build
 | POST | `/recall` | 召回记忆 |
 | POST | `/context` | 召回 + 分层组装（返回可直接注入的文本） |
 | POST | `/consolidate` | 跑一轮整理 |
+| POST | `/forget` | 忘掉一条 |
+| POST | `/pin` | 置顶 / 取消置顶 |
+| POST | `/repair` | 改掉记错的那条（`old` → `new`） |
+| POST | `/list` | 列出具体内容 |
 | GET | `/stats` | 统计 |
 
 鉴权：请求头 `X-MemFade-Token`，与服务端 `--token` 一致才放行。
 默认只监听 `127.0.0.1`。
+
+## 副本校验
+
+MaiBot / LangBot / NoneBot2 把插件目录放进 `sys.path`，
+同进程里可能同时存在两份 `memfade`——而 `sys.modules` 会返回先导入的那份。
+两份副本的 `MemoryKind` 是**不同的类对象**（`==` 相等但 `is` 不相等），
+核心里有多处 `is MemoryKind.X` 的身份比较，走错分支时**不报错、只是行为悄悄变了**。
+
+所以这三个适配器 import 之后都校验一次 `memfade.__file__`：
+解析到的必须是「适配器自带的副本」或「开发树里的源码副本」，否则直接 `RuntimeError`。
 

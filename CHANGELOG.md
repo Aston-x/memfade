@@ -1,5 +1,79 @@
 # 更新日志
 
+## 0.4.1（2026-11-03）
+
+这一版补三件**该有却没有**的东西，外加一份诚实的竞品对照。
+
+### 写入前闸门补上「工具路径」
+
+上一版的闸门只管抽取。实测发现**模型自己调「记住」工具**是另一条路，
+不经过抽取那一整套纪律——一句游戏数据被当成「关于某个人的稳定事实」记了进去
+（主语还是群里另一个人）。
+
+新增 `memfade/guards.py::check_remember_request`：
+
+* 拦临时状态与临时情绪；
+* 拦「跟要记的那个人没关系」。判据是**内容里提不提到那个人**，
+  不是「主语是不是那个人」——「许杏玖欠季怡半首歌」这种承诺主语是机器人，
+  说的却是关于季怡的事，该记；
+* 工具路径现在也存下用户原话（`meta["quote"]`），事后能看出这条是从哪句话来的；
+* 主人点名的 `/记住` 只拦临时状态与情绪，**不拦主语范围**——那是主人自己的判断。
+
+线上那两条从工具进来的记忆已删（备份 `memfade.db.bak-20261103-185144`）。
+
+### 副本校验
+
+MaiBot / LangBot / NoneBot2 把插件目录放进 `sys.path`，
+同进程里可能同时存在两份 `memfade`，而 `sys.modules` 会返回先导入的那份。
+两份副本的 `MemoryKind` 是**不同的类对象**（`==` 相等但 `is` 不相等），
+核心里有多处 `is MemoryKind.X` 的身份比较——走错分支时**不报错、只是行为悄悄变了**。
+
+三个适配器现在 import 之后都校验 `memfade.__file__`，
+解析到别的副本直接 `RuntimeError`。宁可明确报错，也不要静默用错版本。
+
+### 修正命令：五个宿主同一套写法
+
+抽取难免出错，出错之后总得有人收拾。核心新增 `MemoryEngine.repair()`：
+按内容片段**真命中**找到那条并改写，旧内容留在 `meta["previous_content"]`。
+
+* MaiBot：`/记忆 修正 <老内容> => <新内容>`
+* LangBot：`记忆 修正 <老内容> => <新内容>`
+* NoneBot2：`记忆 修正 <老内容> => <新内容>`
+* Koishi：`记忆.修正 <老内容> => <新内容>`
+* HTTP 侧车：`POST /repair`
+
+拆解格式统一放在 `memfade/textutil.py::split_repair_request`，
+别各写各的。自己改一条，比整库清空的代价小得多。
+
+### 部署加 `--host` 快捷方式
+
+```powershell
+python scripts\build_plugin.py --host maibot --host-root '<MaiBot根目录>'
+python scripts\build_plugin.py --host astrbot --host-root '<AstrBot安装目录>'
+```
+
+不用再记宿主把插件放哪（AstrBot 是 `data/plugins`，MaiBot 是 `plugins`）。
+顺带把部署规格按宿主拆开了：AstrBot 的目录名必须是合法 Python 标识符，
+且它同时决定配置文件名与数据目录。
+
+### AstrBot 适配器大修
+
+原来的 AstrBot 适配器**装上等于白装**：LLM 没接、embedder 没接、群聊不区分说话人。
+这次接上宿主的 LLM 与 embedder、把作用域改成「群级公共 + 人级私密」双层、
+补上 `fade` / `maintenance` 配置节与后台维护任务，
+并把运维工具改成与宿主解耦（`verify_against_chat` 不再硬依赖 MaiBot 的 LLM）。
+完整交接说明见 [`docs/ASTRBOT-ADAPTER-CHANGES.md`](docs/ASTRBOT-ADAPTER-CHANGES.md)。
+
+### 与主流记忆方案的差异
+
+新增 [`docs/COMPARISON.md`](docs/COMPARISON.md)：跟 mem0 / Hindsight / Graphiti /
+cognee / Letta / OpenMemory / llm-memory 以及几十个 Bot 记忆插件逐条比。
+真差异七条、**诚实的差距七条**（没有图与实体链接、没有 reflect 形成高层信念、
+没有服务化与鉴权、没有重排模型、没有公开基准、没有 MCP server、提示词偏中文），
+外加一张「什么时候该选别人」的表。
+
+---
+
 ## 0.4.0（2026-11-03）
 
 这一版是**修「记错」**。上一版修的是「记了不该记的」，

@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "name": "记忆淡化引擎 (memfade)",
   "description": "带艾宾浩斯式淡化的长期记忆：记得住，也忘得恰到好处。会话严格隔离，旧事自动退场。",
   "author": {

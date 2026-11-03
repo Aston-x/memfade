@@ -1,5 +1,5 @@
 name: astrbot_plugin_memfade
 desc: 会记得，也会忘得恰到好处。艾宾浩斯衰减、四档淡化梯度、分层作用域隔离。
-version: 0.4.0
+version: 0.4.1
 author: memfade
 repo: https://github.com/Aston-x/memfade
