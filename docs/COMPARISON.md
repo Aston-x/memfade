@@ -143,9 +143,9 @@ MaiBot 上游曾经自带 **A_Memorix**（136 文件 / 2.9MB，
 
 1. **没有图与实体链接。** "张三"和"小张"是不是同一个人，memfade 答不了。
    Graphiti / A-MEM / mem0 在这点上更强。
-2. **没有 reflect 与佐证链。** Hindsight 的 reflect、Letta 的自我编辑能形成**高层信念**
-   （"她偏好清淡"），memfade 只有一个 `GISTED` 摘要档，
-   **压的是单条，不是从多条里归纳出结论**，也没有"这条结论由哪几条支撑"的记录。
+2. ~~**没有 reflect 与佐证链。**~~ **已补齐（v0.4.2）**：新增 `OBSERVATION` 种类与
+   `_reflect_pass`，能从多条记忆归纳出高层结论，每条结论带 `meta["derived_from"]` 佐证链。
+   详见 `ARCHITECTURE.md`「观察归纳（reflect）」章节。
 3. **没有服务化与鉴权。** 多用户 SaaS 场景直接出局。
 4. **没有重排模型。** 召回靠向量 + 关键词融合打分，没有 cross-encoder rerank。
 5. **没有公开基准。** memfade 有 `bench_decay` / `bench_memory_quality`，

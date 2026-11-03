@@ -1,5 +1,38 @@
 # 更新日志
 
+## 0.4.2（2026-11-03）
+
+这一版补齐了 COMPARISON.md 里标的最大差距：**观察归纳（reflect）**。
+
+### 观察归纳：从多条记忆归纳高层结论
+
+新增 ``MemoryKind.OBSERVATION`` 种类，稳定性基数 180 天（比单条事实的 30 天更长）。
+
+``ConsolidationService`` 新增 ``_reflect_pass``：当一个作用域有足够多的活跃记忆
+（默认 ≥5 条）时，调 LLM 把这批记忆归纳成 1~3 条更高层的观察。
+每条观察带 ``meta["derived_from"]`` 佐证链（源自哪几条记忆的 ID）。
+
+这是 Hindsight 等方案的核心能力：从一批记忆归纳出更高层的认知
+（比如「她的饮食偏好」），且每条结论都带证据原话与佐证计数。
+memfade 原来只有 gist（压单条摘要），没有「从多条归纳」的能力。
+现在补齐了。
+
+配置：
+
+```toml
+[maintenance]
+enable_reflect = true
+reflect_min_sources = 3
+reflect_max_sources = 10
+reflect_min_active = 5
+```
+
+测试：新增 ``tests/test_reflect.py``（5 项），验证归纳出的观察带佐证链、
+不够活跃的作用域不触发归纳、LLM 不可用时静默跳过、配置关闭时不归纳、
+已有 observation 不重复归纳。全量 318 项通过。
+
+详见 ``docs/ARCHITECTURE.md``「观察归纳（reflect）」章节。
+
 ## 0.4.1（2026-11-03）
 
 这一版补三件**该有却没有**的东西，外加一份诚实的竞品对照。
