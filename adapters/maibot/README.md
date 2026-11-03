@@ -43,6 +43,7 @@ python scripts\build_plugin.py --deploy '<MaiBot 的 plugins 目录>'
 | `/记忆 搜 <关键词>` | 检索（必须真命中，不掺无关记忆） |
 | `/记忆 整理` | 立刻跑一轮整理 |
 | `/记忆 置顶 <内容>` | 让它永不淡化（`取消置顶` 反向） |
+| `/记忆 修正 <老内容> => <新内容>` | 改掉记错的那条（抽取难免出错，得有补救口） |
 | `/记忆 接管` | 看长期记忆归谁管（有没有别的记忆系统还在跑） |
 | `/记住 <内容>` | 显式记住 |
 | `/忘掉 <片段>` | 忘掉一条 |
@@ -59,6 +60,11 @@ python scripts\build_plugin.py --deploy '<MaiBot 的 plugins 目录>'
 插件管理里有两个页面：**记忆引擎**（总览 + 淡化档位分布 + 最近记忆 + 体检）
 和 **记忆检索**。
 
+「最近写入的记忆」表里带**编号**与**依据原话**两列——
+依据原话就是这条记忆在对话里的出处（用户自己说的那句）。
+看到记错了，在「改掉记错的那条」卡片里填编号与新内容就能改；
+也能直接删掉那条。
+
 ## 配置
 
 | 键 | 默认 | 说明 |
@@ -72,7 +78,8 @@ python scripts\build_plugin.py --deploy '<MaiBot 的 plugins 目录>'
 | `memory.extract_enabled` | true | 是否抽取 |
 | `memory.extract_every_n` | 3 | 每 N 轮抽取一次 |
 | `memory.flush_idle_minutes` | 10 | 安静多久后把攒下的消息抽掉 |
-| `memory.min_importance` | 0.35 | 低于此不入库 |
+| `memory.min_importance` | 0.45 | 稳定事实的入库门槛（事件类另用更低的门槛） |
+| `memory.store_evidence` | true | 给每条记忆存「依据原话」，写入前的闸门靠它核对 |
 | `memory.cross_session` | false | 是否允许跨会话共享 |
 | `memory.self_names` | `[]` | 机器人自己的名字（留空则自动读宿主 `bot_config` 的 `nickname`） |
 | `memory.focus_subjects` | `[]` | 只记这些主语的事（留空=不限制） |

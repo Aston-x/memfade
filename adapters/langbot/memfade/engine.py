@@ -29,7 +29,7 @@ from .decay import (
 )
 from .dedup import is_near_duplicate
 from .embedding import EmbeddingClient, make_embedder
-from .extract import MemoryExtractor
+from .extract import MemoryExtractor, _clamp_importance
 from .llm import LLMClient
 from .retrieve import MemoryContext, MemoryRetriever
 from .store import MemoryStore
@@ -167,7 +167,12 @@ class MemoryEngine:
             scope_key=scope_key,
             kind=draft.kind,
             content=content,
-            importance=max(0.0, min(1.0, float(draft.importance))),
+            # ⚠ 种类区间在这里夹一次——这是**存储形态**的约束：
+            # 事件不该压过稳定事实（「上周吃了炸鸡」不能比「他叫许杏玖」还重要）。
+            # 门槛判定用的是模型自己给的分数（见 remember 开头），
+            # 别在这里夹完再拿去比门槛：semantic 的下限 0.40
+            # 会把模型给的 0.1 抬过旧门槛 0.35，等于给垃圾开后门。
+            importance=_clamp_importance(draft.kind, draft.importance),
             strength=1.0,
             anchor_at=ts,
             status=MemoryStatus.ACTIVE,
@@ -538,7 +543,9 @@ class MemoryEngine:
                 kind=kind,
                 content=content,
                 summary=str(item.get("summary") or ""),
-                importance=max(0.0, min(1.0, float(item.get("importance") or 0.5))),
+                # 导入不走门槛（那是「抽取」的门槛），但种类区间照样要夹：
+                # 否则一条 0.95 的事件记忆能压过所有稳定事实。
+                importance=_clamp_importance(kind, float(item.get("importance") or 0.5)),
                 strength=max(0.0, min(1.0, float(item.get("strength") or 1.0))),
                 anchor_at=anchor,
                 status=status,
@@ -609,6 +616,61 @@ class MemoryEngine:
         updated.status = MemoryStatus.ARCHIVED
         self.store.update(updated, fts_text(updated.content))
         return True
+
+    def edit_memory(
+        self,
+        memory_id: int,
+        *,
+        content: Optional[str] = None,
+        kind: Any = None,
+        importance: Optional[float] = None,
+        subject: Optional[str] = None,
+        predicate: Optional[str] = None,
+        object: Optional[str] = None,
+        quote: Optional[str] = None,
+        meta_patch: Optional[dict[str, Any]] = None,
+        now: Optional[float] = None,
+    ) -> Optional[Memory]:
+        """改一条已经入库的记忆。
+
+        为什么需要它：抽取难免出错（把「今天」写成「每天」、
+        把一次性的吩咐写成长期偏好）。出错之后必须有个**补救口**——
+        主人自己改一条，比整库清空的代价小得多。
+
+        改完会重算内容哈希、重建全文索引，并**清掉向量**——
+        内容变了旧向量就对不上了，留着会让检索悄悄失准；
+        置空之后由补向量流程重算。
+        """
+
+        mem = self.store.get(int(memory_id))
+        if mem is None:
+            return None
+        ts = float(now if now is not None else time.time())
+        if content is not None:
+            text = str(content).strip()
+            if not text:
+                return None
+            mem.content = text
+            # 摘要与向量都是按旧内容算的，改完就过期了。
+            mem.summary = ""
+            mem.embedding = None
+        if kind is not None:
+            mem.kind = MemoryKind(str(kind)) if not isinstance(kind, MemoryKind) else kind
+        if importance is not None:
+            mem.importance = _clamp_importance(mem.kind, float(importance))
+        if subject is not None:
+            mem.subject = str(subject).strip()
+        if predicate is not None:
+            mem.predicate = str(predicate).strip()
+        if object is not None:
+            mem.object = str(object).strip()
+        if quote is not None:
+            mem.meta = {**dict(mem.meta or {}), "quote": str(quote).strip()}
+        if meta_patch:
+            mem.meta = {**dict(mem.meta or {}), **(meta_patch or {})}
+        mem.updated_at = ts
+        self.store.update(mem, fts_text(mem.content))
+        return mem
 
     async def consolidate(
         self, scope: Optional[Scope] = None, *, now: Optional[float] = None

@@ -82,7 +82,15 @@ class MemorySectionConfig(PluginConfigBase):
     extract_every_n: int = Field(default=3, description="每隔多少轮抽取一次")
     flush_idle_minutes: int = Field(default=10, description="会话安静多久后把攒下的消息抽成记忆")
     extract_min_messages: int = Field(default=2, description="一轮里至少几条消息才抽取")
-    min_importance: float = Field(default=0.35, description="低于此显著性的内容不入库")
+    min_importance: float = Field(
+        default=0.45,
+        description="低于此显著性的内容不入库（稳定事实的门槛；事件类另有低门槛）",
+    )
+    store_evidence: bool = Field(
+        default=True,
+        description="给每条记忆存「依据原话」：面板上能看见它是从哪句话来的，"
+        "写入前的闸门也靠它核对「记忆里的断言是不是模型自己加的」",
+    )
 
     self_names: list[str] = Field(
         default_factory=list,
@@ -242,6 +250,7 @@ def _build_engine_config(plugin: "MemFadePlugin", db_path: str) -> MemFadeConfig
             "every_n_turns": max(1, int(mem.extract_every_n)),
             "min_messages": max(1, int(mem.extract_min_messages)),
             "min_importance": float(mem.min_importance),
+            "store_evidence": bool(mem.store_evidence),
             "max_per_batch": 8,
             "use_rules_fallback": True,
             "promote_cross_scope": bool(mem.cross_session),
@@ -1116,8 +1125,9 @@ class MemFadePlugin(MaiBotPlugin):
         "记忆",
         description="查看记忆。/记忆 查当前会话记住的东西，/记忆 搜 <关键词>，"
         "/记忆 整理 立刻跑一轮整理，/记忆 置顶 <内容> 让它永不淡化，"
+        "/记忆 修正 <老内容> => <新内容> 改掉记错的那条，"
         "/记忆 接管 看看记忆板块归谁管，/记忆 清空 确认 清空这个会话的记忆",
-        pattern=r"^/(?:记忆|memory)(?:\s+(?P<action>搜|search|整理|maintain|置顶|pin|取消置顶|unpin|接管|takeover|体检|check|清空|clear|wipe)?)?"
+        pattern=r"^/(?:记忆|memory)(?:\s+(?P<action>搜|search|整理|maintain|置顶|pin|取消置顶|unpin|修正|fix|改|接管|takeover|体检|check|清空|clear|wipe)?)?"
         r"(?:\s+(?P<query>.+))?$",
     )
     async def cmd_memory(self, **kwargs: Any) -> tuple:
@@ -1209,6 +1219,44 @@ class MemFadePlugin(MaiBotPlugin):
             await self.ctx.send.text("记得这些：\n" + "\n".join(lines), stream_id)
             return True, f"找到 {len(hits)} 条记忆", 0
 
+        if action in ("修正", "fix", "改"):
+            # 抽取难免出错（把「今天」写成「每天」、把一次性的吩咐写成长期偏好）。
+            # 出错之后得有个**补救口**：主人自己改一条，
+            # 比整库清空的代价小得多。
+            raw = str(groups.get("query") or "").strip()
+            old = ""
+            new = ""
+            for token in ("=>", "→", "改成", "改为"):
+                if token in raw:
+                    old, _, new = raw.partition(token)
+                    break
+            old = old.strip()
+            new = new.strip()
+            if not old or not new:
+                await self.ctx.send.text(
+                    "要改哪条？照这个格式发：/记忆 修正 老内容 => 新内容",
+                    stream_id,
+                )
+                return True, "格式不对", 0
+            vector = await engine.embed_query(old) if old else None
+            hits = engine.recall(
+                old, scope, top_k=5, query_vector=vector, require_match=True
+            )
+            if not hits:
+                await self.ctx.send.text("没找到要改的那条记忆。", stream_id)
+                return True, "没找到", 0
+            target = hits[0].memory
+            updated = engine.edit_memory(target.id, content=new)
+            if updated is None:
+                await self.ctx.send.text("改不了这条记忆。", stream_id)
+                return False, "改写失败", 1
+            # 内容变了，旧向量就对不上了——重算。
+            await engine.embed_memories([updated])
+            await self.ctx.send.text(
+                f"改好了：{target.content}\n现在记的是：{updated.content}", stream_id
+            )
+            return True, "已修正", 0
+
         if action in ("置顶", "pin", "取消置顶", "unpin"):
             pinned = action in ("置顶", "pin")
             if not query:
@@ -1256,6 +1304,11 @@ class MemFadePlugin(MaiBotPlugin):
             for mem in recent:
                 marker = "（已淡出）" if mem.status.value != "active" else ""
                 lines.append(f"· {mem.content}{marker}")
+                # 依据原话：让人一眼看出这条是从哪句话来的。
+                # 「记忆库被污染了」这种问题，只有看得见才发现得了。
+                quote = str((mem.meta or {}).get("quote") or "").strip()
+                if quote:
+                    lines.append(f"  依据：{quote}")
             await self.ctx.send.text("\n".join(lines), stream_id)
         return True, "已返回记忆统计", 0
 
@@ -1474,6 +1527,7 @@ class MemFadePlugin(MaiBotPlugin):
         for mem in engine.store.iter_all(limit=max(1, min(100, int(limit)))):
             recent.append(
                 {
+                    "id": mem.id,
                     "content": mem.content[:80],
                     "kind": mem.kind.value,
                     "status": mem.status.value,
@@ -1481,6 +1535,8 @@ class MemFadePlugin(MaiBotPlugin):
                     "strength": round(engine.effective_strength(mem), 2),
                     "recall_count": mem.recall_count,
                     "scope": mem.scope_key,
+                    # 依据原话：让人一眼看出这条是从哪句话来的。
+                    "quote": str((mem.meta or {}).get("quote") or "")[:120],
                 }
             )
         return {
@@ -1870,6 +1926,69 @@ class MemFadePlugin(MaiBotPlugin):
             "skipped": len(items) - len(written),
             "sample": [m.content for m in written[:5]],
         }
+
+    @API(
+        "memfade_edit_memory",
+        description="改掉记错的那条记忆（内容 / 依据原话）",
+        version="1",
+    )
+    async def memfade_edit_memory(
+        self, memory_id: str = "", content: str = "", quote: str = ""
+    ) -> Dict[str, Any]:
+        """改一条已经入库的记忆。
+
+        抽取难免出错（把「今天」写成「每天」、把一次性的吩咐写成长期偏好）。
+        出错之后得有个**补救口**：主人自己改一条，比整库清空代价小得多。
+        """
+
+        engine = self._engine
+        if engine is None:
+            return {"ok": False, "error": "引擎未就绪"}
+        try:
+            mid = int(str(memory_id).strip())
+        except Exception:
+            return {"ok": False, "error": "记忆编号不对"}
+        if mid <= 0:
+            return {"ok": False, "error": "记忆编号不对"}
+        old = engine.store.get(mid)
+        if old is None:
+            return {"ok": False, "error": "没有编号为 %d 的记忆" % mid}
+        new_text = (content or "").strip()
+        if not new_text:
+            return {"ok": False, "error": "新内容是空的"}
+        updated = engine.edit_memory(mid, content=new_text, quote=(quote or None))
+        if updated is None:
+            return {"ok": False, "error": "改写失败"}
+        # 内容变了，旧向量就对不上了——重算，否则检索会悄悄失准。
+        await engine.embed_memories([updated])
+        return {
+            "ok": True,
+            "id": updated.id,
+            "old": old.content,
+            "content": updated.content,
+            "quote": str((updated.meta or {}).get("quote") or ""),
+        }
+
+    @API(
+        "memfade_delete_memory",
+        description="删掉一条记错的记忆",
+        version="1",
+    )
+    async def memfade_delete_memory(self, memory_id: str = "") -> Dict[str, Any]:
+        """删掉一条记忆（物理删除，不是归档）。"""
+
+        engine = self._engine
+        if engine is None:
+            return {"ok": False, "error": "引擎未就绪"}
+        try:
+            mid = int(str(memory_id).strip())
+        except Exception:
+            return {"ok": False, "error": "记忆编号不对"}
+        target = engine.store.get(mid)
+        if target is None:
+            return {"ok": False, "error": "没有编号为 %d 的记忆" % mid}
+        engine.forget(mid, hard=True)
+        return {"ok": True, "id": mid, "content": target.content}
 
     def _busiest_scope_id(self, engine) -> str:
         """找记忆最多的那个会话——面板默认看它。"""

@@ -15,6 +15,11 @@
 * **同一件事只写一次**。避免「四个赞」被写成四条。
 * **用户明确说「记住」才允许跨会话共享**。默认一律会话内可见。
 * **不记密钥、密码、证件号**。
+
+提示词只是第一层。第二层是代码闸门（``memfade.guards``）：
+每条候选都要回对话里找到**依据原话**，拿原话跟内容对账——
+内容里冒出原话没有的「每天/永远」，或者原话明明是「今天/这次」，
+这条记忆就被降级成事件；临时状态与临时情绪直接不入库。
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Optional, Sequence
 
 from .config import ExtractionConfig
+from .guards import guard_drafts
 from .llm import LLMClient, parse_json_block
 from .textutil import split_atomic
 from .types import MemoryDraft, MemoryKind
@@ -39,7 +45,7 @@ EXTRACTION_SYSTEM_PROMPT = (
     "- content: 一句完整、自洽的中文陈述（主语明确，不要写「他说」这种指代不明的话）\n"
     "- kind: episodic（发生过的具体事件）/ semantic（稳定事实）/ "
     "preference（喜好厌恶）/ relation（人与人关系）/ skill（习惯做法）\n"
-    "- importance: 0~1 的小数。稳定事实 0.6~0.9；一次性事件 0.2~0.45；"
+    "- importance: 0~1 的小数。稳定事实 0.65~0.9；一次性事件 0.3~0.5；"
     "用户强调的 0.9 以上\n"
     "- subject / predicate / object: 把事实拆成三段，**必须填**。\n"
     "  subject 是「谁」@SUBJECT_HINT@，predicate 是「怎么样」（住在 / 喜欢 / 参加），\n"
@@ -70,13 +76,28 @@ EXTRACTION_SYSTEM_PROMPT = (
     "10月16日有大纲解析直播」\n"
     "   正例（对）：「小明参加蓝桥杯只报名不缴费」\n"
     "6. 一次性事件（临时状态、刚发生的小事、上次买了什么）可以抽，"
-    "但必须标记为 episodic 且 importance 不超过 0.45。\n"
+    "但必须标记为 episodic 且 importance 不超过 0.5。\n"
     "7. 同一件事只写一条，不要换措辞重复。\n"
     "8. 主语必须是**人**：用对话里出现过的名字，"
     "不要用「用户」「对方」「他」「她」，也不要拿作品名、节目名、赛事名当主语。\n"
     "9. 绝不记录密码、密钥、身份证号、银行卡号、验证码等敏感信息。\n"
     "10. 不确定就不抽。宁可少抽，不要抽错。\n"
-    "11. 输出格式示例："
+    "11. **常态与这一次必须分清**。只有用户明说了长期性"
+    "（一直/每天/总是/以后/通常/习惯/从来），"
+    "才记成 semantic/preference/relation/skill；"
+    "带「今天/这次/刚才/当时/现在/整天」的一次性情况，"
+    "要么不记，要么记成 episodic，**并且在句子里保留这个时间限定**。\n"
+    "    反例（错）：用户说「今天只有一节课」→ 记成「每天只有一节课」。\n"
+    "    正例（对）：「季怡今天只有一节课」（episodic）。\n"
+    "12. **条件不许丢**。「周末和节假日不上早自习」"
+    "「只有起晚了才不吃早饭直接去」「发动态的时候才那样说话」——"
+    "这类限定必须留在句子里。限定一丢，记忆就变成假事实。\n"
+    "13. **一次性的吩咐不是偏好**。用户说「这次你用…的语气」"
+    "「帮我写一下」这种当次交代，最多记成 episodic；"
+    "只有「我喜欢/讨厌…」「我一向…」「以后都…」才记成 preference。\n"
+    "14. **临时状态和临时情绪不记**。累、困、饿、心情不好、"
+    "发不出去、被拦、暂时——这些是眼下如此，不值得长期记住。\n"
+    "15. 输出格式示例："
     '[{{"content":"小明喜欢辣的食物","kind":"semantic","importance":0.8,'
     '"subject":"小明","predicate":"喜欢","object":"辣的食物","cross_scope":false}}]'
 )
@@ -442,7 +463,7 @@ class MemoryExtractor:
         drafts: Sequence[MemoryDraft],
         messages: Sequence[dict[str, Any]],
     ) -> tuple[list[MemoryDraft], list[tuple[MemoryDraft, str]]]:
-        """按「主语纪律」筛一遍抽取结果。"""
+        """按「主语纪律」+「写入前闸门」筛一遍抽取结果。"""
 
         if not drafts:
             return [], []
@@ -471,7 +492,20 @@ class MemoryExtractor:
             require_person=self.config.require_person_subject,
             default_subject=default_subject,
         )
-        return kept, dropped
+        if not kept:
+            return kept, dropped
+        # 第二层闸门：主语对了不等于内容对。
+        # 「今天只有一节课」被写成「每天只有一节课」，
+        # 「这次你用这种语气」被写成「希望你一直用这种语气」——
+        # 这类错主语纪律抓不住，只能拿依据原话对账。
+        guarded, guard_notes = guard_drafts(
+            kept,
+            messages,
+            store_evidence=self.config.store_evidence,
+            max_chars=self.config.evidence_max_chars,
+        )
+        dropped.extend(guard_notes)
+        return guarded, dropped
 
     async def summarize(self, content: str, *, max_chars: int = 40) -> str:
         """把一条记忆压成 gist 摘要。LLM 不可用时退回规则兜底。"""
@@ -628,7 +662,12 @@ class MemoryExtractor:
             if self._looks_sensitive(content):
                 continue
             kind = _KIND_ALIASES.get(str(item.get("kind") or "").lower(), MemoryKind.EPISODIC)
-            importance = _clamp_importance(kind, _clamp_float(item.get("importance"), 0.5))
+            # ⚠ 这里存**模型自己给的分数**，不按种类夹紧。
+            # 种类区间（episodic ≤0.55 / semantic ≥0.40）是**存储形态**的约束，
+            # 在写入那一刻夹一次就够了；提前夹会把模型给的低分「抬」过门槛
+            #（semantic 的下限 0.40 > 旧门槛 0.35，等于给垃圾开后门）。
+            # 门槛就该卡在模型自己的分数上。
+            importance = _clamp_float(item.get("importance"), 0.5)
             cross = bool(item.get("cross_scope")) and self.config.promote_cross_scope
             subject = str(item.get("subject") or "").strip()
             predicate = str(item.get("predicate") or "").strip()

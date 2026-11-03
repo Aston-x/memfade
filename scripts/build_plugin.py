@@ -48,6 +48,7 @@ OPERATOR_TOOLS = (
     "backup_memory_stack.py",
     "retire_legacy_memory.py",
     "clean_library.py",
+    "edit_memory.py",
     "audit_db.py",
     "verify_against_chat.py",
     "acceptance.py",

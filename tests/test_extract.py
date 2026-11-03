@@ -222,21 +222,80 @@ class TestGist(unittest.IsolatedAsyncioTestCase):
 
 
 class TestImportanceBounds(unittest.IsolatedAsyncioTestCase):
-    """显著性必须按种类夹紧——提示词不是保证。"""
+    """显著性必须按种类夹紧——提示词不是保证。
+
+    ⚠ 夹紧发生在**落库那一刻**，不是抽取那一刻。
+    抽取阶段留着模型自己给的原始分数，门槛才不会被种类下限顶开
+    （semantic 下限 0.40 一旦提前夹，模型给的 0.1 会被抬到 0.40，
+    正好越过 0.45 的门槛一半——垃圾记忆就有了后门）。
+    """
 
     async def test_episodic_capped(self):
         reply = '[{"content":"上周三去吃了炸鸡","kind":"episodic","importance":0.95}]'
         extractor = MemoryExtractor(llm=FakeLLM(reply))
         result = await extractor.extract([{"role": "user", "content": "x"}])
         self.assertTrue(result.drafts)
-        self.assertLessEqual(result.drafts[0].importance, 0.55)
+        # 草稿里是模型给的原始分，落库时才夹。
+        self.assertAlmostEqual(result.drafts[0].importance, 0.95)
+        engine, path, _ = temp_engine()
+        try:
+            scope = Scope(platform="qq", chat_type="session", chat_id="s1")
+            written = engine.remember_many(result.drafts, scope)
+            self.assertTrue(written)
+            self.assertLessEqual(written[0].importance, 0.55)
+        finally:
+            engine.close()
+            for suffix in ("", "-wal", "-shm"):
+                p = path + suffix
+                if os.path.exists(p):
+                    os.remove(p)
 
     async def test_semantic_floored(self):
         reply = '[{"content":"他叫许杏玖","kind":"semantic","importance":0.05}]'
         extractor = MemoryExtractor(llm=FakeLLM(reply))
         result = await extractor.extract([{"role": "user", "content": "x"}])
         self.assertTrue(result.drafts)
-        self.assertGreaterEqual(result.drafts[0].importance, 0.40)
+        self.assertAlmostEqual(result.drafts[0].importance, 0.05)
+        engine, path, _ = temp_engine()
+        try:
+            scope = Scope(platform="qq", chat_type="session", chat_id="s1")
+            # 抽取出来的低分事实会被门槛拦掉（见下一个用例）；
+            # 这里的下限夹紧走**导入**路径——导入不走门槛，但种类区间照样要夹。
+            written = engine.import_memories(
+                [{"content": "他叫许杏玖", "kind": "semantic", "importance": 0.05}],
+                scope,
+            )
+            self.assertTrue(written)
+            self.assertGreaterEqual(written[0].importance, 0.40)
+        finally:
+            engine.close()
+            for suffix in ("", "-wal", "-shm"):
+                p = path + suffix
+                if os.path.exists(p):
+                    os.remove(p)
+
+    async def test_low_scored_fact_is_not_admitted(self):
+        """模型自己给的分太低，就该被门槛挡在门外。
+
+        旧实现里种类下限（semantic 0.40）会把 0.05 抬到 0.40，
+        正好越过旧门槛 0.35 —— 模型不确定的东西照样入库。
+        """
+
+        reply = '[{"content":"他也许叫许杏玖","kind":"semantic","importance":0.30}]'
+        extractor = MemoryExtractor(llm=FakeLLM(reply))
+        result = await extractor.extract([{"role": "user", "content": "x"}])
+        self.assertTrue(result.drafts)
+        engine, path, _ = temp_engine()
+        try:
+            scope = Scope(platform="qq", chat_type="session", chat_id="s1")
+            written = engine.remember_many(result.drafts, scope)
+            self.assertEqual(written, [], "低于门槛的稳定事实不该入库")
+        finally:
+            engine.close()
+            for suffix in ("", "-wal", "-shm"):
+                p = path + suffix
+                if os.path.exists(p):
+                    os.remove(p)
 
 
 class TestEngineKindThreshold(unittest.TestCase):
@@ -258,6 +317,67 @@ class TestEngineKindThreshold(unittest.TestCase):
             p = self.path + suffix
             if os.path.exists(p):
                 os.remove(p)
+
+
+class TestEditMemory(unittest.TestCase):
+    """改一条记忆：抽取会出错，出错之后得能自己改。"""
+
+    def setUp(self):
+        from tests.helpers import temp_engine
+
+        self.engine, self.path, self.config = temp_engine()
+        from memfade import Scope
+
+        self.scope = Scope(platform="qq", chat_type="session", chat_id="s1")
+
+    def tearDown(self):
+        self.engine.close()
+        import os
+
+        for suffix in ("", "-wal", "-shm"):
+            p = self.path + suffix
+            if os.path.exists(p):
+                os.remove(p)
+
+    def _remember(self, content: str) -> int:
+        written = self.engine.remember(
+            MemoryDraft(content=content, kind=MemoryKind.SEMANTIC, importance=0.8),
+            self.scope,
+        )
+        self.assertIsNotNone(written)
+        return written.id
+
+    def test_content_change_is_searchable_and_old_text_is_gone(self):
+        mid = self._remember("季怡每天只有一节课")
+        updated = self.engine.edit_memory(mid, content="季怡今天只有一节课")
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated.content, "季怡今天只有一节课")
+        hits = self.engine.recall("一节课", self.scope, top_k=5)
+        self.assertTrue(hits)
+        self.assertEqual(hits[0].memory.content, "季怡今天只有一节课")
+        # 旧内容不该还能搜到（全文索引要跟着改写重建）。
+        old = self.engine.recall("每天", self.scope, top_k=5)
+        self.assertFalse([h for h in old if "每天" in h.memory.content])
+
+    def test_kind_and_quote_are_settable(self):
+        mid = self._remember("季怡准备发一篇招人帖")
+        updated = self.engine.edit_memory(
+            mid,
+            kind=MemoryKind.EPISODIC,
+            quote="我想发一篇小黑盒招人",
+            importance=0.3,
+        )
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated.kind, MemoryKind.EPISODIC)
+        self.assertEqual(updated.meta.get("quote"), "我想发一篇小黑盒招人")
+        self.assertAlmostEqual(updated.importance, 0.3)
+
+    def test_missing_memory_returns_none(self):
+        self.assertIsNone(self.engine.edit_memory(999999, content="x"))
+
+    def test_empty_content_is_rejected(self):
+        mid = self._remember("季怡每天只有一节课")
+        self.assertIsNone(self.engine.edit_memory(mid, content="   "))
 
     def test_episodic_below_general_threshold_is_kept(self):
         from memfade import MemoryDraft, MemoryKind

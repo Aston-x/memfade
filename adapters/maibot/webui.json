@@ -81,6 +81,35 @@
           "version": "1",
           "confirmation": "确认清空这个会话的全部记忆？这一步不可逆。"
         },
+        "edit_memory": {
+          "api": "memfade_edit_memory",
+          "version": "1",
+          "parameters": {
+            "memory_id": {
+              "type": "string",
+              "max_length": 20
+            },
+            "content": {
+              "type": "string",
+              "max_length": 500
+            },
+            "quote": {
+              "type": "string",
+              "max_length": 500
+            }
+          }
+        },
+        "delete_memory": {
+          "api": "memfade_delete_memory",
+          "version": "1",
+          "parameters": {
+            "memory_id": {
+              "type": "string",
+              "max_length": 20
+            }
+          },
+          "confirmation": "确认删掉这条记忆？删了就找不回来了。"
+        },
         "why": {
           "api": "memfade_why",
           "version": "1",
@@ -322,6 +351,10 @@
           },
           "columns": [
             {
+              "field": "id",
+              "label": "编号"
+            },
+            {
               "field": "content",
               "label": "内容"
             },
@@ -348,6 +381,10 @@
             {
               "field": "scope",
               "label": "作用域"
+            },
+            {
+              "field": "quote",
+              "label": "依据原话"
             }
           ]
         },
@@ -379,7 +416,7 @@
           "children": [
             {
               "type": "input",
-              "name": "import_memories_payload",
+              "name": "payload",
               "label": "记忆 JSON",
               "value": ""
             },
@@ -399,6 +436,39 @@
           "label": "清空这个会话的记忆",
           "action": "clear_scope",
           "variant": "danger"
+        },
+        {
+          "type": "card",
+          "label": "改掉记错的那条",
+          "children": [
+            {
+              "type": "input",
+              "name": "memory_id",
+              "label": "记忆编号",
+              "value": ""
+            },
+            {
+              "type": "input",
+              "name": "content",
+              "label": "新内容",
+              "value": ""
+            },
+            {
+              "type": "button",
+              "label": "改写",
+              "action": "edit_memory"
+            },
+            {
+              "type": "button",
+              "label": "删掉这条",
+              "action": "delete_memory",
+              "variant": "danger"
+            },
+            {
+              "type": "text",
+              "label": "编号在「最近写入的记忆」表的第一列。抽取偶尔会把一次性的情况记成常态，发现记错了就在这里改掉。"
+            }
+          ]
         }
       ]
     },

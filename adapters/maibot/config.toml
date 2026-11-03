@@ -15,7 +15,11 @@ extract_enabled = true
 extract_every_n = 3
 flush_idle_minutes = 10
 extract_min_messages = 2
-min_importance = 0.35
+# 稳定事实的入库门槛。事件类另用更低的门槛（淡出引擎会自然淘汰它们）。
+min_importance = 0.45
+# 给每条记忆存「依据原话」：面板上看得见它是从哪句话来的，
+# 写入前的闸门也靠它核对「记忆里的断言是不是模型自己加的」。
+store_evidence = true
 # 机器人自己的名字：主语是它时不入库（留空则自动读宿主 bot_config 的 nickname）
 self_names = []
 # 只记这些主语的事（留空=不限制；群聊里认识很多人时用）
