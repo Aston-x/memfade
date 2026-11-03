@@ -113,7 +113,7 @@ python scripts\build_plugin.py --deploy '<MaiBot 的 plugins 目录>'
 | `backup_memory_stack.py` | 备份整栈记忆（插件库 + 宿主旧记忆 + 各插件状态 + 可读 JSON） |
 | `retire_legacy_memory.py` | 让宿主旧记忆系统退场（memfade 独占长期记忆） |
 | `clean_library.py` | 体检式清理：按规则/名单删改，重复条目合并 |
-| `audit_db.py` | 审一份库：作用域分布、索引与正文是否一致、疑似测试数据 |
+| `audit_db.py` | 审一份库：作用域分布、索引与正文是否一致、疑似测试数据、**按现在的写入前闸门重扫全库**（`--focus` / `--self-name`） |
 | `verify_against_chat.py` | 拿记忆回聊天记录里核对，判断有没有依据 |
 
 ```powershell

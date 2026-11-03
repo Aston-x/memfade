@@ -131,6 +131,7 @@ AstrBot 没有「群内按人区分的会话」这个概念——`umo` 在群聊
 
 ```bash
 python memfade_tools/audit_db.py --db <记忆库路径>     # 体检
+python memfade_tools/audit_db.py --db <记忆库路径> --focus <要记的人>   # 体检 + 按现在的闸门重扫全库
 python memfade_tools/acceptance.py                     # 跑一遍完整闭环自检
 python memfade_tools/clean_library.py --db <路径>      # 清理污染条目
 python memfade_tools/edit_memory.py --db <路径> --patch <清单.json>  # 批量修
