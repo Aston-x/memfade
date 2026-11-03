@@ -38,6 +38,8 @@ class MemoryKind(str, Enum):
     GIST = "gist"
     """残影：被淡化成一行摘要后的记忆形态。"""
 
+    OBSERVATION = "observation"
+    """观察：从多条记忆中归纳出的高层结论，带佐证链。"""
 
 class MemoryStatus(str, Enum):
     """记忆在「淡化梯度」上的位置。

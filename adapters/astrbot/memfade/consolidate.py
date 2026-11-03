@@ -30,6 +30,34 @@ from .extract import MemoryExtractor
 from .store import MemoryStore
 from .textutil import fts_text
 from .types import Memory, MemoryStatus
+from .types import MemoryDraft, MemoryKind
+from .types import Scope
+
+
+REFLECT_SYSTEM_PROMPT = (
+    "你是一个聊天机器人的长期记忆归纳器。\n"
+    "\n"
+    "给你一组关于同一个人（或同一个话题）的记忆，请归纳出**更高层的观察结论**。\n"
+    "每条观察结论应该：\n"
+    "- 用一句话概括多条记忆的共性或模式（比如「饮食偏好」「工作习惯」「社交风格」）\n"
+    "- 指出**源自哪几条记忆的 ID**（source_ids 数组）\n"
+    "- 显著性设为 0.7~0.9（观察比单条事实更重要）\n"
+    "\n"
+    "硬性要求：\n"
+    "1. **不要补充原文里没有的信息**。只归纳，不编造。\n"
+    "2. **一条观察至少综合 2 条记忆**。单条记忆不值得归纳。\n"
+    "3. **不要归纳已经存在的观察**。如果输入里有 kind=observation 的记忆，跳过它。\n"
+    "4. **输出 JSON 数组**，每条观察包含 content / source_ids / importance 字段。\n"
+    "5. 如果归纳不出有意义的结论，返回空数组 []。\n"
+    "\n"
+    "示例输入：\n"
+    "- #1: 季怡喜欢辣的食物\n"
+    "- #2: 季怡不吃肥肠\n"
+    "- #3: 季怡爱喝可乐\n"
+    "\n"
+    "示例输出：\n"
+    '[{"content": "季怡有明确的饮食偏好：喜欢辣食和可乐，不吃肥肠", "source_ids": [1, 2, 3], "importance": 0.8}]\n'
+)
 
 
 @dataclass
@@ -43,6 +71,7 @@ class ConsolidationReport:
     merged: int = 0
     superseded: int = 0
     purged: int = 0
+    reflected: int = 0
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -54,6 +83,7 @@ class ConsolidationReport:
             "merged": self.merged,
             "superseded": self.superseded,
             "purged": self.purged,
+            "reflected": self.reflected,
             "errors": list(self.errors),
         }
 
@@ -91,6 +121,8 @@ class ConsolidationService:
             report.merged = self._merge_pass(scope_key, report)
         if self.config.maintenance.enable_supersede:
             report.superseded = self._supersede_pass(scope_key)
+        if self.config.maintenance.enable_reflect:
+            report.reflected = await self._reflect_pass(scope_key, report)
         report.purged += self._trim_pass(scope_key)
         report.purged += self._purge_pass(ts)
         return report
@@ -276,4 +308,103 @@ class ConsolidationService:
             if self.store.delete(mem.id):
                 removed += 1
         return removed
+
+    async def _reflect_pass(self, scope_key: Optional[str], report: ConsolidationReport) -> int:
+        """从多条记忆中归纳高层观察。
+
+        为什么要单独做一个 reflect pass：
+        gist 是把一条记忆压成一行摘要，reflect 是把**多条记忆**归纳成
+        一条更高层的结论。后者能形成对一个人的整体认知
+        （「她的饮食偏好」「她的工作习惯」），而不仅仅是压缩单条事实。
+        """
+
+        if self.extractor is None or self.extractor.llm is None:
+            return 0
+
+        reflected = 0
+        for key in self._scope_keys(scope_key):
+            reflected += await self._reflect_scope(key, report)
+        return reflected
+
+    async def _reflect_scope(self, scope_key: str, report: ConsolidationReport) -> int:
+        """对一个作用域做归纳。"""
+
+        # 只归纳 active 的记忆：fading/gisted 已经在退场，不值得归纳
+        memories = self.store.iter_scope(
+            scope_key, statuses=("active",), limit=self.config.maintenance.reflect_max_sources * 2
+        )
+        # 排除已有的 observation，避免重复归纳
+        memories = [m for m in memories if m.kind != MemoryKind.OBSERVATION]
+        if len(memories) < self.config.maintenance.reflect_min_active:
+            return 0
+
+        # 取前 N 条（按 updated_at 降序，优先归纳新记忆）
+        memories.sort(key=lambda m: m.updated_at, reverse=True)
+        memories = memories[: self.config.maintenance.reflect_max_sources]
+        if len(memories) < self.config.maintenance.reflect_min_sources:
+            return 0
+
+        # 构造 prompt
+        facts_text = "\n".join(f"- #{m.id}: {m.content}" for m in memories)
+        prompt = f"以下是需要归纳的记忆：\n{facts_text}"
+
+        try:
+            raw = await self.extractor.llm.complete(
+                prompt,
+                system=REFLECT_SYSTEM_PROMPT,
+                max_tokens=800,
+                temperature=0.2,
+            )
+        except Exception as exc:
+            report.errors.append(f"归纳 #{scope_key} 失败: {exc}")
+            return 0
+
+        # 解析 JSON
+        from .llm import parse_json_block
+
+        items = parse_json_block(raw)
+        if not items:
+            return 0
+
+        reflected = 0
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "").strip()
+            source_ids = item.get("source_ids") or []
+            if not content or not source_ids:
+                continue
+
+            # 校验 source_ids 都是合法的 int
+            try:
+                source_ids = [int(sid) for sid in source_ids]
+            except (TypeError, ValueError):
+                continue
+            if len(source_ids) < 2:
+                continue
+
+            # 构造 observation 记忆
+            importance = float(item.get("importance") or 0.8)
+            importance = max(0.5, min(0.95, importance))
+
+            # 构造 observation 记忆（直接建 Memory，不走 draft → engine 那条路）
+            mem = Memory(
+                id=0,
+                scope_key=scope_key,
+                kind=MemoryKind.OBSERVATION,
+                content=content,
+                importance=importance,
+                strength=1.0,
+                anchor_at=time.time(),
+                status=MemoryStatus.ACTIVE,
+                subject="",
+                predicate="",
+                object="",
+                source="reflect",
+                meta={"derived_from": source_ids},
+            )
+            self.store.add(mem, fts_text(content))
+            reflected += 1
+
+        return reflected
 

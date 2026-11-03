@@ -289,6 +289,17 @@ class MaintenanceConfig:
     enable_merge: bool = True
     enable_gist: bool = True
     enable_supersede: bool = True
+    enable_reflect: bool = True
+    """是否启用观察归纳（从多条记忆中归纳高层结论）。"""
+
+    reflect_min_sources: int = 3
+    """至少几条记忆才值得归纳成一条观察。"""
+
+    reflect_max_sources: int = 10
+    """一次归纳最多用几条记忆，防止 prompt 太长。"""
+
+    reflect_min_active: int = 5
+    """作用域里至少几条活跃记忆才触发归纳。"""
 
     max_memories_per_scope: int = 5000
     """单个会话的记忆条数上限。

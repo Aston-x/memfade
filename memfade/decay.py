@@ -163,6 +163,16 @@ DEFAULT_PROFILES: dict[MemoryKind, KindProfile] = {
         gist_threshold=0.08,
         archive_threshold=0.02,
     ),
+    MemoryKind.OBSERVATION: KindProfile(
+        base_stability_days=180.0,
+        importance_gain=10.0,
+        stability_growth=1.8,
+        stability_ceiling=12.0,
+        fade_enter=0.50,
+        fade_exit=0.45,
+        gist_threshold=0.12,
+        archive_threshold=0.03,
+    ),
 }
 
 
