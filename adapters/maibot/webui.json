@@ -62,7 +62,7 @@
             }
           }
         },
-        "import": {
+        "import_memories": {
           "api": "memfade_import",
           "version": "1",
           "parameters": {
@@ -367,6 +367,27 @@
           "type": "button",
           "label": "自检 LLM 抽取",
           "action": "extract_check"
+        },
+        {
+          "type": "card",
+          "label": "导入记忆",
+          "children": [
+            {
+              "type": "input",
+              "name": "import_memories_payload",
+              "label": "记忆 JSON",
+              "value": ""
+            },
+            {
+              "type": "button",
+              "label": "导入",
+              "action": "import_memories"
+            },
+            {
+              "type": "text",
+              "label": "粘贴导出的 JSON。导入会保留种类、显著性与淡化状态，重复的自动跳过。"
+            }
+          ]
         }
       ]
     },
