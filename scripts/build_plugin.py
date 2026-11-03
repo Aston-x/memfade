@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 import zipfile
@@ -31,13 +32,55 @@ ADAPTERS = {
     "astrbot": REPO_ROOT / "adapters" / "astrbot",
     "nonebot2": REPO_ROOT / "adapters" / "nonebot2" / "src",
 }
-# 只有 MaiBot 是「整个目录就是一个插件」的形态，能直接拷进宿主的 plugins/。
-# 其它框架各有各的安装方式（pip 包 / 插件市场 / 编译产物），不能一锅端——
-# 之前这里没分开，--deploy 会把四个适配器轮流覆盖到同一个目录里去。
+# 能直接拷进宿主的形态。其它框架各有各的安装方式（pip 包 / 插件市场 /
+# 编译产物），不能一锅端——之前这里没分开，--deploy 会把四个适配器轮流
+# 覆盖到同一个目录里去。
+#
+# 每个 spec 三件事：
+#   source            —— 源目录
+#   dir_name          —— 装进宿主时的目录名
+#   preserve_in_dir   —— 覆盖时要保留下来的文件（宿主上的现场配置）
+#
+# 目录名很关键：AstrBot 以 data.plugins.<目录名> 导入，目录名必须是合法
+# Python 标识符（不能带横杠！MaiBot 的 memfade-plugin 在 AstrBot 下会直接
+# 导入失败），而且它同时决定了配置文件名（<目录名>_config.json）和数据目录
+# （data/plugin_data/<目录名>/）——改名等于用户配置失联。
 DEPLOYABLE = {
-    "maibot": REPO_ROOT / "adapters" / "maibot",
+    "maibot": {
+        "source": REPO_ROOT / "adapters" / "maibot",
+        "dir_name": "memfade-plugin",
+        # MaiBot 的 config.toml 在插件目录内，覆盖时要保住
+        "preserve_in_dir": ["config.toml"],
+        "tools": None,  # None = 用默认全套
+    },
+    "astrbot": {
+        "source": REPO_ROOT / "adapters" / "astrbot",
+        "dir_name": "astrbot_plugin_memfade",
+        # AstrBot 的配置在 data/config/<目录名>_config.json、数据在
+        # data/plugin_data/<目录名>/，都在插件目录外——天然就保住了，不用管。
+        "preserve_in_dir": [],
+        # backup_memory_stack / retire_legacy_memory 写死了 MaiBot 的目录结构
+        # 和插件 ID，在 AstrBot 下没有意义，不跟着发货。
+        # verify_against_chat 已经去掉了 MaiBot 硬依赖（--host-root 走宿主，
+        # 否则走 --llm-base-url 的 OpenAI 兼容接口），所以可以发。
+        "tools": (
+            "clean_library.py",
+            "edit_memory.py",
+            "audit_db.py",
+            "verify_against_chat.py",
+            "acceptance.py",
+        ),
+    },
 }
 IGNORED = {"__pycache__", ".pytest_cache", ".mypy_cache"}
+
+# 各宿主的插件目录（相对宿主根目录）。
+# ⚠ 用户不该靠记路径来装插件：MaiBot 是 ``<根>/plugins``，
+# AstrBot 是 ``<根>/data/plugins``——给个 ``--host`` 就能推出来。
+HOST_PLUGIN_DIRS = {
+    "maibot": ("plugins",),
+    "astrbot": ("data", "plugins"),
+}
 
 # 随插件一起发货的运维工具。
 #
@@ -65,7 +108,7 @@ def sync_core(target: Path) -> None:
     print(f"[build] 核心已同步到 {dst}")
 
 
-def sync_tools(target: Path) -> None:
+def sync_tools(target: Path, names=None) -> None:
     """把运维工具复制进适配器目录的 tools/ 下。"""
 
     # ⚠ 目录名带前缀：宿主会把插件目录放进 sys.path，
@@ -75,7 +118,7 @@ def sync_tools(target: Path) -> None:
         shutil.rmtree(dst)
     dst.mkdir(parents=True, exist_ok=True)
     copied = 0
-    for name in OPERATOR_TOOLS:
+    for name in (names or OPERATOR_TOOLS):
         src = REPO_ROOT / "scripts" / name
         if not src.exists():
             continue
@@ -85,47 +128,56 @@ def sync_tools(target: Path) -> None:
         print(f"[build] 运维工具已同步到 {dst}（{copied} 个）")
 
 
-def deploy(target: Path, plugins_dir: Path) -> Path:
+def deploy(spec: dict, plugins_dir: Path) -> Path:
     """把适配器目录部署到宿主的 plugins 目录。
 
-    目录名用 ``memfade-plugin`` 而不是 ``memfade``：
+    目录名来自 spec["dir_name"]。MaiBot 用 memfade-plugin 而不是 memfade：
     宿主加载插件时会把 plugins/ 目录放进 sys.path，如果插件目录就叫 memfade，
     那个目录本身会被当成同名包，把插件自带的 memfade/ 核心包遮蔽掉。
+    AstrBot 用 astrbot_plugin_memfade：它以 data.plugins.<目录名> 导入，
+    目录名必须是合法 Python 标识符，而且它同时决定配置文件名和数据目录。
     """
 
-    dst = plugins_dir / "memfade-plugin"
-    # ⚠ 宿主上的 config.toml 是**现场配置**（改过的阈值、开关都在里面），
-    # 仓库里那份只是模板。直接覆盖等于把用户的设置抹了。
-    saved_config = None
-    live_config = dst / "config.toml"
-    if live_config.exists():
-        saved_config = live_config.read_text(encoding="utf-8")
+    dst = plugins_dir / spec["dir_name"]
+    # ⚠ 宿主上的现场配置（改过的阈值、开关都在里面）不能被仓库模板抹掉。
+    saved = {}
+    for rel in spec.get("preserve_in_dir") or []:
+        p = dst / rel
+        if p.exists():
+            saved[rel] = p.read_bytes()
     if dst.exists():
         shutil.rmtree(dst)
     shutil.copytree(
-        target,
+        spec["source"],
         dst,
         ignore=shutil.ignore_patterns(*IGNORED, "*.pyc"),
     )
-    if saved_config is not None:
-        live_config.write_text(saved_config, encoding="utf-8")
-        print(f"[build] 已保留宿主上的 config.toml")
+    for rel, blob in saved.items():
+        (dst / rel).write_bytes(blob)
+        print(f"[build] 已保留宿主上的 {rel}")
     print(f"[build] 已部署到 {dst}")
     return dst
 
 
-def make_zip(target: Path, out_dir: Path) -> Path:
-    """打成可分发的 zip。"""
+def make_zip(spec: dict, out_dir: Path) -> Path:
+    """打成可分发的 zip。
 
+    zip 里的根目录名用 spec["dir_name"]——用 target.name 的话，AstrBot 那边
+    解压出来会是 ``astrbot/``，而它的配置文件名和数据目录都跟着目录名走，
+    名字对不上就等于用户配置失联。
+    """
+
+    target = spec["source"]
+    root = spec["dir_name"]
     out_dir.mkdir(parents=True, exist_ok=True)
-    archive = out_dir / f"memfade-{target.name}.zip"
+    archive = out_dir / f"memfade-{root}.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(target.rglob("*")):
             if path.is_dir() or any(part in IGNORED for part in path.parts):
                 continue
             if path.suffix == ".pyc":
                 continue
-            zf.write(path, Path(target.name) / path.relative_to(target))
+            zf.write(path, Path(root) / path.relative_to(target))
     print(f"[build] 已打包 {archive}")
     return archive
 
@@ -135,6 +187,17 @@ def main() -> int:
     parser.add_argument("--zip", action="store_true", help="额外产出 zip")
     parser.add_argument("--dest", default="", help="额外复制一份到指定目录")
     parser.add_argument("--deploy", default="", help="部署到指定的宿主 plugins 目录")
+    parser.add_argument(
+        "--host",
+        default="",
+        choices=sorted(HOST_PLUGIN_DIRS),
+        help="按宿主部署（配合 --host-root 自动推出插件目录，不用记路径）",
+    )
+    parser.add_argument(
+        "--host-root",
+        default="",
+        help="宿主根目录（--host 用）：MaiBot 的项目根 / AstrBot 的安装目录",
+    )
     args = parser.parse_args()
 
     if not CORE_DIR.is_dir():
@@ -144,17 +207,40 @@ def main() -> int:
     for name, target in ADAPTERS.items():
         sync_core(target)
         sync_tools(target)
-    for name, target in DEPLOYABLE.items():
+    deploy_dir = args.deploy
+    if args.host:
+        if not args.host_root:
+            print(
+                "[build] --host 要配 --host-root（宿主根目录）："
+                "MaiBot 的项目根 / AstrBot 的安装目录",
+            )
+            return 2
+        # --host 时只部署那一个适配器：另一个宿主的目录结构不一样，
+        # 一起部署会把文件铺到不该铺的地方。
+        deploy_dir = os.path.join(
+            args.host_root, *HOST_PLUGIN_DIRS[args.host]
+        )
+        print("[build] 目标：%s（%s）" % (deploy_dir, args.host))
+
+    for name, spec in DEPLOYABLE.items():
+        if args.host and name != args.host:
+            continue
+        # 工具清单按适配器裁剪：AstrBot 不发 MaiBot 专属的那两个
+        tools = spec.get("tools")
+        if tools is not None:
+            sync_tools(spec["source"], tools)
         if args.zip:
-            make_zip(target, REPO_ROOT / "dist")
+            make_zip(spec, REPO_ROOT / "dist")
         if args.dest:
             dest = Path(args.dest) / f"memfade-{name}"
             if dest.exists():
                 shutil.rmtree(dest)
-            shutil.copytree(target, dest, ignore=shutil.ignore_patterns(*IGNORED, "*.pyc"))
+            shutil.copytree(
+                spec["source"], dest, ignore=shutil.ignore_patterns(*IGNORED, "*.pyc")
+            )
             print(f"[build] 已复制到 {dest}")
-        if args.deploy:
-            deploy(target, Path(args.deploy))
+        if deploy_dir:
+            deploy(spec, Path(deploy_dir))
     return 0
 
 

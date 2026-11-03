@@ -174,6 +174,15 @@ def _install_stubs() -> None:
     class Plain:
         pass
 
+    class StarTools:
+        """桩件：插件会拿它算数据目录。"""
+
+        @staticmethod
+        def get_data_dir(plugin_name=None):
+            import tempfile as _tf
+
+            return _tf.mkdtemp(prefix="memfade-star-")
+
     class _Logger:
         def info(self, *args, **kwargs):
             pass
@@ -189,6 +198,7 @@ def _install_stubs() -> None:
 
     api.logger = _Logger()
     star.Context = Context
+    star.StarTools = StarTools
     star.Star = Star
     star.register = register
     event.AstrMessageEvent = AstrMessageEvent
@@ -254,7 +264,7 @@ class TestAstrBotAdapterLogic(unittest.IsolatedAsyncioTestCase):
 
         from memfade.types import MemoryDraft, MemoryKind
 
-        scope = self.plugin._scope_of(self._event("你好"))
+        scope = self.plugin._scopes_of(self._event("你好"))[-1]
         self.engine.remember(
             MemoryDraft(
                 content="季怡喜欢辣的食物",
@@ -275,7 +285,7 @@ class TestAstrBotAdapterLogic(unittest.IsolatedAsyncioTestCase):
 
         from memfade.types import MemoryDraft, MemoryKind
 
-        scope = self.plugin._scope_of(self._event("你好"))
+        scope = self.plugin._scopes_of(self._event("你好"))[-1]
         self.engine.remember(
             MemoryDraft(
                 content="季怡喜欢辣的食物",
@@ -304,15 +314,22 @@ class TestAstrBotAdapterLogic(unittest.IsolatedAsyncioTestCase):
         return "\n".join(parts)
 
     def test_scope_uses_group_when_present(self):
+        """群聊要读两层：群级公共 + 当前说话人的人级私密。"""
         event = self._event("你好", group_id="1127155154")
-        scope = self.plugin._scope_of(event)
-        self.assertEqual(scope.chat_type, "group")
-        self.assertEqual(scope.chat_id, "1127155154")
+        scopes = self.plugin._scopes_of(event)
+        self.assertEqual(len(scopes), 2)
+        self.assertEqual(scopes[0].chat_type, "group")
+        self.assertEqual(scopes[0].chat_id, "1127155154")
+        self.assertEqual(scopes[1].chat_type, "group_user")
+        self.assertEqual(scopes[1].chat_id, "1127155154#u1")
 
     def test_scope_falls_back_to_private(self):
+        """私聊只有一层。"""
         event = self._event("你好")
-        scope = self.plugin._scope_of(event)
-        self.assertEqual(scope.chat_type, "private")
+        scopes = self.plugin._scopes_of(event)
+        self.assertEqual(len(scopes), 1)
+        self.assertEqual(scopes[0].chat_type, "private")
+        self.assertEqual(scopes[0].chat_id, "u1")
 
     async def test_injects_into_system_prompt(self):
         from memfade import MemoryDraft, MemoryKind, Scope

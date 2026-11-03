@@ -167,15 +167,49 @@ VERIFY_PROMPT = (
 
 
 async def _verify_with_llm(
-    rows: List[dict], messages: List[str], host_root: str, batch_size: int = 4
+    rows: List[dict],
+    messages: List[str],
+    host_root: str,
+    batch_size: int = 4,
+    llm_base_url: str = "",
+    llm_model: str = "",
+    llm_api_key: str = "",
 ) -> List[dict]:
-    """用宿主 LLM 逐条判断记忆有没有依据。"""
+    """用宿主 LLM 逐条判断记忆有没有依据。
 
+    宿主 LLM 的来源有两条路：
+
+    * ``host_root`` 给了且能 import 到 MaiBot 的 ``src.services.llm_service``
+      —— 用它（MaiBot 部署的常规路径）；
+    * 否则退到核心自带的 ``memfade.llm.HttpLLMClient``，用
+      ``--llm-base-url / --llm-model / --llm-api-key`` 指一个 OpenAI 兼容接口。
+
+    原来这里直接 ``from src.services import llm_service``，在非 MaiBot 宿主
+    （比如 AstrBot）下必崩——工具应该跟宿主无关。
+    """
+
+    llm_client = None
     if host_root and host_root not in sys.path:
         sys.path.insert(0, host_root)
-    from src.services import llm_service  # type: ignore
+    try:
+        from src.services import llm_service  # type: ignore
+
+        use_host = True
+    except Exception:
+        use_host = False
 
     from memfade.extract import parse_json_block
+
+    if not use_host:
+        if not (llm_base_url and llm_model):
+            return []
+        from memfade.llm import HttpLLMClient
+
+        llm_client = HttpLLMClient(
+            base_url=llm_base_url,
+            api_key=llm_api_key,
+            model=llm_model,
+        )
 
     verdicts: List[dict] = []
     for start in range(0, len(rows), batch_size):
@@ -190,18 +224,25 @@ async def _verify_with_llm(
         # ⚠ 提示词里有字面花括号（JSON 示例），不能用 .format()——
         # 「所有提示词都能被 format」是仓库里的一条守卫测试。
         prompt = VERIFY_PROMPT.replace("{facts}", "\n\n".join(blocks))
-        request = llm_service.LLMServiceRequest(
-            task_name="memory",
-            request_type="memfade.verify",
-            prompt=prompt,
-            temperature=0.1,
-            # MiniMax 这类模型默认开 thinking，思考与正文共用预算——
-            # 给小了正文会被截断（仓库规则 L5.6 记着这个坑）。
-            max_tokens=6000,
-        )
-        result = await llm_service.generate(request)
-        payload = result.to_capability_payload()
-        items = parse_json_block(str(payload.get("response") or ""))
+        if use_host:
+            request = llm_service.LLMServiceRequest(
+                task_name="memory",
+                request_type="memfade.verify",
+                prompt=prompt,
+                temperature=0.1,
+                # MiniMax 这类模型默认开 thinking，思考与正文共用预算——
+                # 给小了正文会被截断（仓库规则 L5.6 记着这个坑）。
+                max_tokens=6000,
+            )
+            result = await llm_service.generate(request)
+            raw_text = str(result.to_capability_payload().get("response") or "")
+        else:
+            raw_text = await llm_client.complete(
+                prompt,
+                temperature=0.1,
+                max_tokens=6000,
+            )
+        items = parse_json_block(raw_text)
         if not isinstance(items, list):
             print("  ! 这一批没解析出 JSON，跳过")
             continue
@@ -257,8 +298,15 @@ def main() -> int:
     parser.add_argument("--messages", default="", help="MaiBot 的 MaiBot.db（消息库）")
     parser.add_argument("--chat-file", default="", help="纯文本聊天记录（与 --messages 二选一）")
     parser.add_argument("--scope", default="", help="只看某个作用域")
-    parser.add_argument("--llm", action="store_true", help="用宿主 LLM 逐条判断有没有依据")
-    parser.add_argument("--host-root", default="", help="MaiBot 根目录（--llm 时需要）")
+    parser.add_argument("--llm", action="store_true", help="用 LLM 逐条判断有没有依据")
+    parser.add_argument(
+        "--host-root", default="", help="MaiBot 根目录（--llm 时优先用它的 LLM）"
+    )
+    parser.add_argument(
+        "--llm-base-url", default="", help="OpenAI 兼容接口地址（非 MaiBot 宿主时用）"
+    )
+    parser.add_argument("--llm-model", default="", help="模型名")
+    parser.add_argument("--llm-api-key", default="", help="API Key")
     args = parser.parse_args()
 
     if args.messages:
@@ -291,11 +339,21 @@ def main() -> int:
         import asyncio
 
         if not args.host_root:
-            print("--llm 需要 --host-root")
+            print(
+                "--llm 需要 --host-root（用 MaiBot 的 LLM）"
+                " 或 --llm-base-url + --llm-model（用 OpenAI 兼容接口）"
+            )
             return 1
         messages = load_messages(args.messages) if args.messages else chat.splitlines()
         verdicts = asyncio.run(
-            _verify_with_llm([dict(row) for row in rows], messages, args.host_root)
+            _verify_with_llm(
+                [dict(row) for row in rows],
+                messages,
+                args.host_root,
+                llm_base_url=args.llm_base_url,
+                llm_model=args.llm_model,
+                llm_api_key=args.llm_api_key,
+            )
         )
         bad = 0
         for item in verdicts:

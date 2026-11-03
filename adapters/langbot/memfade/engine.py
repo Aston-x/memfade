@@ -517,12 +517,17 @@ class MemoryEngine:
                 raw_scope = str(item.get("scope_key") or "").strip()
                 if not raw_scope:
                     continue
-                target_scope = Scope(
-                    platform="qq",
-                    chat_type="session",
-                    chat_id=raw_scope.split(":")[-1] if ":" in raw_scope else raw_scope,
-                    cross_scope=bool(item.get("cross_scope", False)),
-                )
+                # ★ 用 Scope.from_key 还原，不要手写拆键：手写版本把 platform
+                #   写死成 "qq"、chat_id 只取最后一段，别的宿主（astrbot 等）
+                #   导出再导入后作用域会整个错位。
+                target_scope = Scope.from_key(raw_scope)
+                if item.get("cross_scope"):
+                    target_scope = Scope(
+                        platform=target_scope.platform,
+                        chat_type=target_scope.chat_type,
+                        chat_id=target_scope.chat_id,
+                        cross_scope=True,
+                    )
             try:
                 kind = MemoryKind(str(item.get("kind") or "semantic").lower())
             except ValueError:

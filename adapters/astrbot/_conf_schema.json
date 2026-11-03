@@ -1,24 +1,78 @@
 {
   "db_path": {
-    "description": "SQLite 记忆库路径",
+    "description": "SQLite 记忆库文件名。相对路径会放在插件数据目录里",
     "type": "string",
-    "default": "memfade.db",
-    "hint": "相对于 AstrBot 数据目录"
+    "default": "memfade.db"
   },
-  "top_k": {
-    "description": "每轮最多召回多少条记忆",
-    "type": "int",
-    "default": 6
+  "enable_fts": {
+    "description": "启用全文检索索引（关掉只能靠子串匹配，召回会变差）",
+    "type": "bool",
+    "default": true
   },
-  "max_inject_tokens": {
-    "description": "注入上下文的 token 预算",
+  "busy_timeout_ms": {
+    "description": "SQLite 锁等待毫秒数",
     "type": "int",
-    "default": 600
+    "default": 5000
   },
-  "echo_max": {
-    "description": "最多注入多少条已淡出的旧记忆",
-    "type": "int",
-    "default": 2
+  "use_embedding": {
+    "description": "是否启用向量检索。宿主没配 embedding provider 时会自动降级为关键词检索",
+    "type": "bool",
+    "default": true
+  },
+  "use_host_llm": {
+    "description": "用宿主已配置的模型做记忆抽取（推荐）。关掉则需自己填 llm_base_url",
+    "type": "bool",
+    "default": true
+  },
+  "llm_provider_id": {
+    "description": "指定用哪个 provider 做抽取。留空＝用当前会话正在用的那个",
+    "type": "string",
+    "default": ""
+  },
+  "llm_base_url": {
+    "description": "OpenAI 兼容接口地址。宿主没配 provider 时的兜底",
+    "type": "string",
+    "default": ""
+  },
+  "llm_api_key": {
+    "description": "兜底接口的 API Key",
+    "type": "string",
+    "default": ""
+  },
+  "llm_model": {
+    "description": "兜底接口的模型名",
+    "type": "string",
+    "default": ""
+  },
+  "llm_timeout": {
+    "description": "兜底接口的超时秒数",
+    "type": "float",
+    "default": 30.0
+  },
+  "use_host_embedding": {
+    "description": "用宿主的 embedding provider。关掉则需自己填 embedding_base_url",
+    "type": "bool",
+    "default": true
+  },
+  "embedding_provider_id": {
+    "description": "指定用哪个 embedding provider。留空＝取第一个可用的",
+    "type": "string",
+    "default": ""
+  },
+  "embedding_base_url": {
+    "description": "OpenAI 兼容的 embeddings 接口地址（兜底）",
+    "type": "string",
+    "default": ""
+  },
+  "embedding_api_key": {
+    "description": "兜底 embeddings 接口的 API Key",
+    "type": "string",
+    "default": ""
+  },
+  "embedding_model": {
+    "description": "兜底 embeddings 接口的模型名",
+    "type": "string",
+    "default": ""
   },
   "extract_enabled": {
     "description": "是否从对话中抽取记忆",
@@ -30,20 +84,184 @@
     "type": "int",
     "default": 3
   },
+  "extract_min_messages": {
+    "description": "少于这么多条就不抽取（避免只言片语被当成事实）",
+    "type": "int",
+    "default": 2
+  },
+  "flush_idle_minutes": {
+    "description": "安静多久后冲刷抽取缓冲。群里一天说两句时靠这个才记得住",
+    "type": "int",
+    "default": 10
+  },
   "min_importance": {
     "description": "低于此显著性的内容不入库",
     "type": "float",
-    "default": 0.35
+    "default": 0.45
   },
-  "use_embedding": {
-    "description": "是否启用向量检索（关闭则只用关键词检索）",
+  "min_importance_episodic": {
+    "description": "事件类记忆单独的门槛（比稳定事实低）",
+    "type": "float",
+    "default": 0.2
+  },
+  "store_evidence": {
+    "description": "给每条记忆存「依据原话」，面板上看得见它是从哪句话来的",
     "type": "bool",
     "default": true
   },
+  "use_rules_fallback": {
+    "description": "LLM 不可用时是否退化成规则抽取",
+    "type": "bool",
+    "default": true
+  },
+  "require_person_subject": {
+    "description": "强制记忆主语是人。公共知识不入库",
+    "type": "bool",
+    "default": true
+  },
+  "self_names": {
+    "description": "机器人自己的名字。主语是它就不入库",
+    "type": "list",
+    "default": []
+  },
+  "focus_subjects": {
+    "description": "只记这些主语的事。留空＝不限制",
+    "type": "list",
+    "default": []
+  },
+  "subject_hint": {
+    "description": "抽取提示词里的人物提示，形如「（季怡 / 阿明）」",
+    "type": "string",
+    "default": ""
+  },
+  "group_subject": {
+    "description": "群级公共层用的主语词。抽取时主语等于它就记成全群共享",
+    "type": "string",
+    "default": "本群"
+  },
+  "cross_scope": {
+    "description": "是否允许「永远别忘」这类内容跨会话共享。多用户部署建议关闭——开着的话 A 的私密记忆会漏给 B",
+    "type": "bool",
+    "default": false
+  },
+  "top_k": {
+    "description": "每轮最多召回多少条记忆",
+    "type": "int",
+    "default": 8
+  },
+  "max_inject_tokens": {
+    "description": "注入上下文的 token 预算",
+    "type": "int",
+    "default": 600
+  },
+  "echo_max": {
+    "description": "最多注入多少条已淡出的旧记忆",
+    "type": "int",
+    "default": 3
+  },
+  "min_score": {
+    "description": "召回的最低相关度",
+    "type": "float",
+    "default": 0.12
+  },
+  "mmr_lambda": {
+    "description": "去重强度（0.05-1.0），越大越不重复",
+    "type": "float",
+    "default": 0.25
+  },
+  "recent_rescue": {
+    "description": "召回为空时用最近记忆兜底",
+    "type": "bool",
+    "default": true
+  },
+  "reinject_recent": {
+    "description": "兜底时最多带几条最近记忆",
+    "type": "int",
+    "default": 4
+  },
+  "profile_items": {
+    "description": "「关于对方」画像最多几条",
+    "type": "int",
+    "default": 6
+  },
+  "profile_chars": {
+    "description": "「关于对方」画像的字符预算",
+    "type": "int",
+    "default": 300
+  },
+  "fade_enabled": {
+    "description": "启用记忆淡化（关掉就只增不减）",
+    "type": "bool",
+    "default": true
+  },
+  "recall_alpha": {
+    "description": "被想起时的残留学习强度。新强度 = 旧 + α(1-旧)",
+    "type": "float",
+    "default": 0.35
+  },
+  "reinforce_alpha": {
+    "description": "有新证据时的回升幅度",
+    "type": "float",
+    "default": 0.8
+  },
+  "weaken_alpha": {
+    "description": "出现矛盾时的削弱幅度",
+    "type": "float",
+    "default": 0.5
+  },
+  "gist_enabled": {
+    "description": "淡出时把原文压缩成一行摘要",
+    "type": "bool",
+    "default": true
+  },
+  "gist_max_chars": {
+    "description": "摘要的最大字数",
+    "type": "int",
+    "default": 40
+  },
+  "recall_cooldown_seconds": {
+    "description": "强化冷却。同一条记忆短时间内被反复提起不会一直变强",
+    "type": "int",
+    "default": 3600
+  },
   "archive_after_days": {
-    "description": "归档多少天后物理删除（0 表示永不删除）",
+    "description": "归档后多少天物理删除。0 表示永不删除（只归档，可审计）",
     "type": "int",
     "default": 0
+  },
+  "maintenance_enabled": {
+    "description": "启用后台整理。关掉的话摘要压缩、合并、淘汰都不会发生",
+    "type": "bool",
+    "default": true
+  },
+  "maintain_interval_minutes": {
+    "description": "后台整理的间隔分钟数",
+    "type": "int",
+    "default": 60
+  },
+  "max_rows_per_pass": {
+    "description": "单轮整理最多处理多少条",
+    "type": "int",
+    "default": 2000
+  },
+  "enable_merge": {
+    "description": "整理时合并近似重复的记忆",
+    "type": "bool",
+    "default": true
+  },
+  "enable_gist": {
+    "description": "整理时把淡出的记忆压成摘要",
+    "type": "bool",
+    "default": true
+  },
+  "enable_supersede": {
+    "description": "整理时用新事实取代旧事实",
+    "type": "bool",
+    "default": true
+  },
+  "max_memories_per_scope": {
+    "description": "单个作用域最多存多少条",
+    "type": "int",
+    "default": 5000
   }
 }
-

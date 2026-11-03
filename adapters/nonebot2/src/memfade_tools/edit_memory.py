@@ -69,12 +69,18 @@ def backup(db_path: str) -> str:
 
 
 def _scope_of(engine: MemoryEngine, key: str) -> Scope:
-    """把 ``qq:session:xxx`` 这样的作用域键还原成 Scope。"""
+    """把作用域键还原成 Scope。
 
-    parts = str(key or "").split(":")
-    if len(parts) >= 3 and parts[0] == "qq":
-        return Scope(platform=parts[0], chat_type=parts[1], chat_id=":".join(parts[2:]))
-    return Scope(platform="qq", chat_type="session", chat_id=str(key or ""))
+    ★ 用核心的 ``Scope.from_key``（``split(":", 2)`` 语义），不要手写拆键：
+      手写版本把 platform 写死成 ``qq``，别的宿主（astrbot 的
+      ``astrbot:group_user:1001#u1``）会被还原成完全错误的作用域，
+      于是「改记忆」改到了另一个 scope 上去。
+    """
+
+    raw = str(key or "").strip()
+    if not raw:
+        return Scope(platform="qq", chat_type="session", chat_id="")
+    return Scope.from_key(raw)
 
 
 def main() -> int:
