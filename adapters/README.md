@@ -25,7 +25,7 @@
 每个宿主都要能给出「这次对话属于哪个会话」，格式：
 
 ```python
-Scope(platform="qq", chat_type="group", chat_id="1127155154")
+Scope(platform="qq", chat_type="group", chat_id="3000000003")
 ```
 
 **默认会话内隔离**。跨会话共享必须显式开启（`cross_scope=True`），
@@ -93,7 +93,7 @@ NoneBot2 没有统一的 prompt 注入钩子，所以本插件提供助手 API�
 from nonebot_plugin_memfade import build_context, remember, recall
 
 text = await build_context(event)      # 可直接拼进 prompt 的记忆文本
-await remember(event, "他叫许杏玖")      # 显式写入一条记忆
+await remember(event, "他叫BotName")      # 显式写入一条记忆
 ```
 
 同时也把记忆文本挂到 `event.set_extra("memfade_context", ...)`，

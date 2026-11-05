@@ -75,10 +75,10 @@ def run(db_path: str) -> int:
     print("\n[2] 写入")
     written = engine.remember(
         MemoryDraft(
-            content="季怡喜欢辣的食物",
+            content="Alice喜欢辣的食物",
             kind=MemoryKind.PREFERENCE,
             importance=0.8,
-            subject="季怡",
+            subject="Alice",
             predicate="喜欢",
             object="辣的食物",
         ),

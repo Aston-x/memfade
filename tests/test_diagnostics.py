@@ -54,7 +54,7 @@ class TestDiagnostics(unittest.TestCase):
 
     def test_detects_missing_spo(self):
         self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢辣的东西", kind=MemoryKind.SEMANTIC, importance=0.8),
+            MemoryDraft(content="BotName喜欢辣的东西", kind=MemoryKind.SEMANTIC, importance=0.8),
             self.scope,
         )
         report = analyze(self.engine.store, self.scope.key())
@@ -64,10 +64,10 @@ class TestDiagnostics(unittest.TestCase):
         """同一条内容写了两遍（哈希不同导致去重没拦住）要能查出来。"""
 
         self.engine.store.add(
-            self._memory("许杏玖喜欢辣的东西"),
-            "许杏玖 喜欢 辣 的 东西",
+            self._memory("BotName喜欢辣的东西"),
+            "BotName 喜欢 辣 的 东西",
         )
-        self.engine.store.add(self._memory("许杏玖喜欢辣的东西"), "许杏玖喜欢辣的东西")
+        self.engine.store.add(self._memory("BotName喜欢辣的东西"), "BotName喜欢辣的东西")
         report = analyze(self.engine.store, self.scope.key())
         self.assertGreaterEqual(report["exact_duplicates"], 1)
 
@@ -92,12 +92,12 @@ class TestDiagnostics(unittest.TestCase):
 
     def test_export_is_json_friendly(self):
         self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢辣的东西", kind=MemoryKind.SEMANTIC, importance=0.8),
+            MemoryDraft(content="BotName喜欢辣的东西", kind=MemoryKind.SEMANTIC, importance=0.8),
             self.scope,
         )
         rows = export_memories(self.engine.store, self.scope.key())
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["content"], "许杏玖喜欢辣的东西")
+        self.assertEqual(rows[0]["content"], "BotName喜欢辣的东西")
         self.assertIn("importance", rows[0])
 
 

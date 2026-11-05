@@ -224,7 +224,7 @@ class MemoryRetriever:
         * 归档：平时根本不进上下文，问到了当然要捞回来；
         * 成摘要：它还在上下文里，但只剩下那一行摘要。
           **对方问的往往正是摘要丢掉的那部分细节**——
-          「蓝桥杯报名截止到什么时候」，而摘要只剩「蓝桥杯报名」。
+          「ProgrammingContest报名截止到什么时候」，而摘要只剩「ProgrammingContest报名」。
           这时候拿摘要去回答，等于没回答。
 
         淡出中（FADING）不用救：它本来就显示原文，只是带着
@@ -380,7 +380,7 @@ class MemoryRetriever:
             return hits
         # 用**实词**（滤掉虚词组合）算重合，而不是全部二元组：
         # 两条记忆共享「的食」「在的」不代表它们讲同一件事，
-        # 共享「蓝桥杯」「季怡」才代表。
+        # 共享「ProgrammingContest」「Alice」才代表。
         top_tokens = set(content_words(hits[0].memory.content, limit=24))
         if not top_tokens:
             return hits
@@ -712,7 +712,7 @@ def _same_topic(content: str, picked: Sequence[str]) -> bool:
     * 最长公共子串 ≥5 字——同一个专有名词或长句
       （「《Re:从零开始的异世界生活》第四季」）。
 
-    两条都在 5 字以下（「许杏玖喜欢辣的食物」vs「许杏玖讨厌香菜」）
+    两条都在 5 字以下（「BotName喜欢辣的食物」vs「BotName讨厌香菜」）
     就不算同一件事——那是两件不同的事，都该留着。
     """
 
@@ -722,7 +722,11 @@ def _same_topic(content: str, picked: Sequence[str]) -> bool:
     for other in picked:
         if similarity(text, other) >= 0.45:
             return True
-        if len(longest_common_substring(text, other)) >= 5:
+        # 按 UTF-8 字节判 LCS 长度，避免 ASCII 人名（如 "BotName"）
+        # 比中文人名（如 "许杏玖"）多占字符数导致误判为同一话题。
+        # 10 字节 ≈ 3 个汉字或 10 个 ASCII 字符，刚好区分"同名不同事"和"同一件事"。
+        lcs = longest_common_substring(text, other)
+        if len(lcs.encode("utf-8")) >= 10:
             return True
     return False
 
@@ -732,8 +736,8 @@ def _compose_fact(mem: Memory) -> str:
 
     ⚠ **只在原文缺主语时才拼**。
     原文已经带主语的话，再拼一遍会重复：
-    「第18届蓝桥杯」+「统一口径」+「官方口径」
-    → 「第18届蓝桥杯统一口径官方口径」（原文明明就是「第18届蓝桥杯官方口径」）。
+    「第18届ProgrammingContest」+「统一口径」+「官方口径」
+    → 「第18届ProgrammingContest统一口径官方口径」（原文明明就是「第18届ProgrammingContest官方口径」）。
 
     反过来，原文只有宾语的时候（内容写成「辣的食物」），
     拼上主语才成为一句完整的话——那才是三元组该干的活。
@@ -767,7 +771,7 @@ def _has_time_marker(text: str) -> bool:
 _DISAMBIGUATION_MARKERS = ("无关", "不涉及", "并非", "并不是", "而不是", "不作为", "算不上")
 """消歧句的标志。
 
-⚠ 不要用单独的「不」——「季怡不吃香菜」是**忌讳**，
+⚠ 不要用单独的「不」——「Alice不吃香菜」是**忌讳**，
 那是画像里最该常驻的一条。「不」只用来筛「某件事不成立」的说法。
 """
 

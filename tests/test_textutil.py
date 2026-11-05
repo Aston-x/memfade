@@ -36,7 +36,7 @@ class TestSplitAtomic(unittest.TestCase):
     def test_loses_no_content(self):
         """拆开只是重新分组，一个字都不能丢。"""
 
-        text = "季怡在做小红书账号，发AI绘画内容，目标是靠流量赚钱；10月起零关注零粉丝。"
+        text = "Alice在做小红书账号，发AI绘画内容，目标是靠流量赚钱；10月起零关注零粉丝。"
         parts = split_atomic(text)
         # 分隔符会被保留，所以两边都按同一套规则去掉分隔符再比。
         seps = "，,。；;、：:"
@@ -57,26 +57,26 @@ class TestSplitAtomic(unittest.TestCase):
     def test_does_not_split_inside_quotes(self):
         """引号里的逗号不是分句点。"""
 
-        parts = split_atomic('季怡的简介是"AI炼丹师，炼到什么发什么喵"')
+        parts = split_atomic('Alice的简介是"AI炼丹师，炼到什么发什么喵"')
         self.assertEqual(len(parts), 1)
         self.assertIn("炼到什么发什么喵", parts[0])
 
     def test_short_text_is_one_piece(self):
-        self.assertEqual(split_atomic("许杏玖喜欢辣的食物"), ["许杏玖喜欢辣的食物"])
+        self.assertEqual(split_atomic("BotName喜欢辣的食物"), ["BotName喜欢辣的食物"])
 
 
 class TestContentWords(unittest.TestCase):
     def test_chinese_yields_content_words(self):
         """早先这里按单字切，中文一个词都抽不出来。"""
 
-        words = content_words("许杏玖喜欢辣的食物")
+        words = content_words("BotName喜欢辣的食物")
         self.assertTrue(words, "中文也必须能抽出内容词")
         self.assertIn("喜欢", words)
 
     def test_drops_function_char_artifacts(self):
         """「的食」「辣的」这种半虚词组合不该算内容词。"""
 
-        words = content_words("许杏玖喜欢的食物")
+        words = content_words("BotName喜欢的食物")
         self.assertNotIn("的食", words)
         self.assertNotIn("的", words)
 
@@ -87,11 +87,11 @@ class TestBestClause(unittest.TestCase):
 
         self.assertEqual(
             best_clause(
-                "许杏玖喜欢辣的食物，也讨厌香菜，"
+                "BotName喜欢辣的食物，也讨厌香菜，"
                 "而且每周三都会去楼下那家新开的猫咖坐一会儿看看猫，"
                 "回来还会跟我讲今天又遇到了哪只猫"
             ),
-            "许杏玖喜欢辣的食物",
+            "BotName喜欢辣的食物",
         )
 
     def test_takes_first_clause_of_long_text(self):
@@ -99,7 +99,7 @@ class TestBestClause(unittest.TestCase):
 
         self.assertEqual(
             best_clause(
-                "后来他跟朋友去吃了炸鸡，许杏玖很开心，"
+                "后来他跟朋友去吃了炸鸡，BotName很开心，"
                 "然后又去买了点东西回来做饭吃，"
                 "路上还跟他说起下周要一起去的地方"
             ),
@@ -118,7 +118,7 @@ class TestBestClause(unittest.TestCase):
         text = (
             "10月16日19:00大纲解析直播（已错过），"
             "另外还有几场别的直播也错过了，"
-            "蓝桥杯那边的直播说是下个月才开"
+            "ProgrammingContest那边的直播说是下个月才开"
         )
         self.assertEqual(best_clause(text, 40), "10月16日19:00大纲解析直播（已错过）")
 
@@ -131,7 +131,7 @@ class TestCjkUnigrams(unittest.TestCase):
     def test_fts_index_stays_bigram_only(self):
         """索引里不能混单字——会污染 BM25 的长度归一化。"""
 
-        tokens = fts_text("许杏玖喜欢辣的食物").split()
+        tokens = fts_text("BotName喜欢辣的食物").split()
         self.assertIn("喜欢", tokens)
         self.assertNotIn("辣", tokens)
 

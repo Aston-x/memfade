@@ -30,7 +30,7 @@ try:
 except Exception:  # pragma: no cover
     HAS_SDK = False
 
-MAIBOT_ROOT = Path(r"G:\AI\许杏玖-MaiBot\MaiBot")
+MAIBOT_ROOT = Path(r"G:\AI\BotName-MaiBot\MaiBot")
 if MAIBOT_ROOT.is_dir() and str(MAIBOT_ROOT) not in sys.path:
     sys.path.insert(0, str(MAIBOT_ROOT))
 try:
@@ -153,7 +153,7 @@ class TestHostItemCompatibility(unittest.IsolatedAsyncioTestCase):
         from adapters.maibot.plugin import MemFadePlugin, MemFadePluginConfig
 
         items = make_items("今天吃什么呢")
-        body = "[系统·长期记忆] 许杏玖喜欢吃辣的东西"
+        body = "[系统·长期记忆] BotName喜欢吃辣的东西"
         memory_item = MemFadePlugin._build_memory_item(items, body)
         merged = [memory_item] + items
         restored = deserialize_prompt_items(
@@ -201,7 +201,7 @@ class TestHostItemCompatibility(unittest.IsolatedAsyncioTestCase):
 
             scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
             plugin._engine.remember(
-                MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9),
+                MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9),
                 scope,
             )
             payload = {
@@ -229,7 +229,7 @@ class TestHostItemCompatibility(unittest.IsolatedAsyncioTestCase):
                     if isinstance(text, str):
                         texts.append(text)
             self.assertTrue(
-                any("许杏玖喜欢吃辣的东西" in text for text in texts),
+                any("BotName喜欢吃辣的东西" in text for text in texts),
                 "记忆没进还原后的上下文",
             )
         finally:
@@ -335,9 +335,9 @@ class FakeSend:
         return {"success": True}
 
 
-def make_message(text: str, *, group_id: str = "", user_id: str = "1738157278", session_id: str = "sess-1"):
+def make_message(text: str, *, group_id: str = "", user_id: str = "1000000001", session_id: str = "sess-1"):
     info: Dict[str, Any] = {
-        "user_info": {"user_id": user_id, "user_nickname": "季怡"},
+        "user_info": {"user_id": user_id, "user_nickname": "Alice"},
         "group_info": {"group_id": group_id} if group_id else None,
         "additional_config": {},
     }
@@ -399,9 +399,9 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
     async def test_scope_parsing_group(self):
         from adapters.maibot.plugin import MemFadePlugin
 
-        parsed = MemFadePlugin._parse_message(make_message("你好", group_id="1127155154"))
+        parsed = MemFadePlugin._parse_message(make_message("你好", group_id="3000000003"))
         self.assertEqual(parsed["chat_type"], "group")
-        self.assertEqual(parsed["group_id"], "1127155154")
+        self.assertEqual(parsed["group_id"], "3000000003")
         self.assertEqual(parsed["session_id"], "sess-1")
 
     async def test_existing_scopes_are_recovered_on_load(self):
@@ -413,7 +413,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         engine = self.plugin._engine
         engine.remember(
-            MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9),
+            MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9),
             Scope(platform="qq", chat_type="session", chat_id="old-scope"),
         )
         # 模拟重启：清空已知会话后重建引擎
@@ -431,8 +431,8 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
-            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"Alice喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"Alice","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢辣的"))
         await plugin._drain_extractions()
@@ -446,8 +446,8 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
-            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"Alice喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"Alice","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢辣的"))
         await plugin._drain_extractions()
@@ -470,15 +470,15 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
-            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"Alice喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"Alice","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢辣的"))
         await plugin._drain_extractions()
         await plugin.cmd_memory(stream_id="sess-1", matched_groups={})
         sent = " ".join(text for text, _ in plugin._ctx.send.sent)
         self.assertIn("记住了", sent)
-        self.assertIn("季怡喜欢辣的食物", sent, "「/记忆」没有把记下的内容列出来")
+        self.assertIn("Alice喜欢辣的食物", sent, "「/记忆」没有把记下的内容列出来")
 
     async def test_recall_tool_is_visible_to_the_model(self):
         """记忆要能「主动深挖」——宿主旧记忆系统的检索工具退场后由它顶上。
@@ -488,8 +488,8 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
-            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"Alice喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"Alice","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢辣的"))
         await plugin._drain_extractions()
@@ -501,8 +501,8 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
-            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"Alice喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"Alice","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢辣的"))
         await plugin._drain_extractions()
@@ -540,8 +540,8 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
-            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"Alice喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"Alice","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢辣的"))
         await plugin._drain_extractions()
@@ -569,8 +569,8 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         plugin = self.plugin
         plugin._ctx.llm.delay = 0.3
         plugin._ctx.llm.reply = (
-            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
-            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"Alice喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"Alice","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         started = time.time()
         await plugin.handle_after_process(message=make_message("我喜欢辣的"))
@@ -625,8 +625,8 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"季怡喜欢辣的食物","kind":"preference","importance":0.8,'
-            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"Alice喜欢辣的食物","kind":"preference","importance":0.8,'
+            '"subject":"Alice","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢辣的"))
         await plugin._drain_extractions()
@@ -637,7 +637,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         }
         self.assertTrue(before)
 
-        await plugin.memfade_selfcheck(query="许杏玖喜欢辣的食物")
+        await plugin.memfade_selfcheck(query="BotName喜欢辣的食物")
         after = {
             m.id: (m.recall_count, m.strength, m.anchor_at)
             for m in engine.store.iter_scope("qq:session:sess-1", limit=50)
@@ -649,15 +649,15 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         parsed = MemFadePlugin._parse_message(make_message("你好"))
         self.assertEqual(parsed["chat_type"], "private")
-        self.assertEqual(parsed["user_id"], "1738157278")
+        self.assertEqual(parsed["user_id"], "1000000001")
 
     async def test_quoted_and_forwarded_content_is_stripped(self):
         """引用与转发不是用户的话——剥掉，否则抽取器会把它们记成用户的事。
 
         真实事故：主人引用机器人的「你昨晚一口气刷完Re」，
-        记忆库里多了一条「许杏玖昨晚一口气刷完了Re」；
-        主人转发蓝桥杯群公告求总结，
-        记忆库里多了一条「季怡在备赛第18届蓝桥杯」。
+        记忆库里多了一条「BotName昨晚一口气刷完了Re」；
+        主人转发ProgrammingContest群公告求总结，
+        记忆库里多了一条「Alice在备赛第18届ProgrammingContest」。
         """
 
         from adapters.maibot.plugin import MemFadePlugin
@@ -666,7 +666,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
             "message_id": "m1",
             "platform": "qq",
             "session_id": "sess-1",
-            "message_info": {"user_info": {"user_id": "1738157278", "user_nickname": "季怡"}},
+            "message_info": {"user_info": {"user_id": "1000000001", "user_nickname": "Alice"}},
             "processed_plain_text": "你昨晚一口气刷完Re，眼睛没熬坏吧  是在说我自己看的",
             "raw_message": [
                 {
@@ -674,8 +674,8 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
                     "data": {
                         "target_message_id": "m0",
                         "target_message_content": "你昨晚一口气刷完Re，眼睛没熬坏吧",
-                        "target_message_sender_id": "2760135586",
-                        "target_message_sender_nickname": "许杏玖",
+                        "target_message_sender_id": "2000000002",
+                        "target_message_sender_nickname": "BotName",
                         "target_message_sender_cardname": None,
                     },
                 },
@@ -685,7 +685,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         parsed = MemFadePlugin._parse_message(message)
         self.assertEqual(parsed["own_text"], "是在说我自己看的")
         self.assertNotIn("刷完Re", parsed["own_text"])
-        self.assertEqual(parsed["speaker"], "季怡")
+        self.assertEqual(parsed["speaker"], "Alice")
 
     async def test_quoted_text_is_kept_as_context(self):
         """被引用的原文要留成一行「机器人：」上下文——它是上下文，不是用户的话。
@@ -701,7 +701,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
             "message_id": "m1",
             "platform": "qq",
             "session_id": "sess-1",
-            "message_info": {"user_info": {"user_id": "1738157278", "user_nickname": "季怡"}},
+            "message_info": {"user_info": {"user_id": "1000000001", "user_nickname": "Alice"}},
             "processed_plain_text": "Master，《影之刃零》买了吗 买了，昨天已经可以玩了",
             "raw_message": [
                 {
@@ -709,8 +709,8 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
                     "data": {
                         "target_message_id": "m0",
                         "target_message_content": "Master，《影之刃零》买了吗",
-                        "target_message_sender_id": "2760135586",
-                        "target_message_sender_nickname": "许杏玖",
+                        "target_message_sender_id": "2000000002",
+                        "target_message_sender_nickname": "BotName",
                     },
                 },
                 {"type": "text", "data": "买了，昨天已经可以玩了"},
@@ -727,7 +727,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         from adapters.maibot.plugin import MemFadePlugin
 
-        text = "【合并转发消息: \n【季怡】: 群公告正文\n】 帮我总结所有内容"
+        text = "【合并转发消息: \n【Alice】: 群公告正文\n】 帮我总结所有内容"
         self.assertEqual(
             MemFadePlugin._strip_leading_blocks(text),
             "帮我总结所有内容",
@@ -740,7 +740,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
         engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
         result = await plugin.handle_planner_before_request(
             items=make_items("今天吃什么呢"), session_id="sess-1", item_schema_version=1
@@ -753,7 +753,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
             for part in item.get("parts", [])
             if part.get("type") == "text"
         )
-        self.assertIn("许杏玖喜欢吃辣的东西", body)
+        self.assertIn("BotName喜欢吃辣的东西", body)
         self.assertEqual(len(new_items), 3, "应当多出一条记忆块")
 
     async def test_memory_item_inserted_before_last_user_message(self):
@@ -762,7 +762,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
         plugin._engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
         items = make_items("今天吃什么呢")
         result = await plugin.handle_planner_before_request(
@@ -784,14 +784,14 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
         plugin._engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
         result = await plugin.handle_replyer_before_request(
             session_id="sess-1", reply_reason="今天吃什么呢", extra_prompt=""
         )
         self.assertIsNotNone(result)
         prompt = result["modified_kwargs"]["extra_prompt"]
-        self.assertIn("许杏玖喜欢吃辣的东西", prompt)
+        self.assertIn("BotName喜欢吃辣的东西", prompt)
         self.assertIn("系统·", prompt)
 
     async def test_replyer_keeps_existing_extra_prompt(self):
@@ -811,13 +811,13 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
         plugin._engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
         result = await plugin.handle_planner_before_request(
             items=make_items("今天吃什么呢"), session_id="sess-1", item_schema_version=1
         )
         body = result["modified_kwargs"]["items"][0]["parts"][0]["text"]
-        self.assertEqual(body.count("许杏玖喜欢吃辣的东西"), 1, "同一条记忆只应出现一次")
+        self.assertEqual(body.count("BotName喜欢吃辣的东西"), 1, "同一条记忆只应出现一次")
 
     async def test_memory_item_meta_is_valid(self):
         plugin = self.plugin
@@ -825,7 +825,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
         plugin._engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
         items = make_items("今天吃什么呢")
         result = await plugin.handle_planner_before_request(
@@ -851,7 +851,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
         plugin._engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
         result = await plugin.handle_planner_before_request(
             items=make_items("今天吃什么呢"), session_id="sess-1", item_schema_version=1
@@ -861,29 +861,92 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(modified["item_schema_version"], 1)
         self.assertEqual(modified["session_id"], "sess-1")
 
-    async def test_profile_is_always_injected(self):
-        """「关于对方」的稳定事实不该等被问到才想起。"""
+    async def test_profile_is_only_injected_for_memory_cues(self):
+        """普通寒暄不常驻画像，只有问到旧事/关系线索时才带出。"""
 
         plugin = self.plugin
         from memfade import MemoryDraft, MemoryKind, Scope
 
         scope = Scope(platform="qq", chat_type="session", chat_id="sess-1")
         plugin._engine.remember(
-            MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
         result = await plugin.handle_planner_before_request(
             items=make_items("在吗"), session_id="sess-1", item_schema_version=1
         )
-        self.assertIsNotNone(result, "画像应当常驻注入")
+        self.assertIsNone(result, "普通寒暄不应为了凑记忆而注入画像")
+
+        result = await plugin.handle_planner_before_request(
+            items=make_items("你还记得我生日吗"), session_id="sess-1", item_schema_version=1
+        )
+        self.assertIsNotNone(result, "明确问到旧事时应当允许画像注入")
         body = result["modified_kwargs"]["items"][0]["parts"][0]["text"]
         self.assertIn("关于对方", body)
-        self.assertIn("许杏玖喜欢辣的食物", body)
+        self.assertIn("BotName喜欢辣的食物", body)
+
+    def test_last_user_text_ignores_planner_boilerplate(self):
+        """检索词必须是真实聊天，不能是末尾的分析指令或时间戳。"""
+
+        from adapters.maibot.plugin import MemFadePlugin
+
+        items = [
+            {
+                "item_type": "UserMessageItem",
+                "meta": {"item_id": "chat-1", "logical_turn_id": "turn-1"},
+                "parts": [
+                    {
+                        "type": "text",
+                        "text": '<message msg_id="m1" time="18:29:10" user="Alice">\n你个啥猫',
+                    }
+                ],
+            },
+            {
+                "item_type": "UserMessageItem",
+                "meta": {"item_id": "time-1", "logical_turn_id": "turn-1"},
+                "parts": [{"type": "text", "text": "时间：2026-11-04 18:43:40"}],
+            },
+            {
+                "item_type": "UserMessageItem",
+                "meta": {"item_id": "instruction-1", "logical_turn_id": "turn-1"},
+                "parts": [{"type": "text", "text": "你需要输出对BotName发言的分析"}],
+            },
+        ]
+
+        self.assertEqual(MemFadePlugin._last_user_text(items), "你个啥猫")
+
+    def test_last_user_text_uses_proactive_intent_only(self):
+        """主动任务只取意图，不把通用“结合记忆”说明当检索词。"""
+
+        from adapters.maibot.plugin import MemFadePlugin
+
+        items = [
+            {
+                "item_type": "UserMessageItem",
+                "meta": {"item_id": "task-1", "logical_turn_id": "turn-1"},
+                "parts": [
+                    {
+                        "type": "text",
+                        "text": (
+                            '<plugin_proactive_task id="proactive:test:1" plugin_id="test">\n'
+                            "插件请求你主动处理一轮聊天：问问Alice晚饭吃了什么。\n"
+                            "触发原因：到饭点了\n"
+                            "请结合当前聊天关系、记忆和上下文，自行决定是否回复以及如何表达。\n"
+                            "</plugin_proactive_task>"
+                        ),
+                    }
+                ],
+            }
+        ]
+
+        query = MemFadePlugin._last_user_text(items)
+        self.assertIn("问问Alice晚饭吃了什么", query)
+        self.assertNotIn("请结合当前聊天关系", query)
 
     async def test_extracts_and_writes(self):
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"季怡喜欢辣的食物","kind":"semantic","importance":0.8,'
-            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"Alice喜欢辣的食物","kind":"semantic","importance":0.8,'
+            '"subject":"Alice","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢吃辣的"))
         await plugin._drain_extractions()
@@ -905,7 +968,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"季怡喜欢辣的食物","kind":"semantic","importance":0.8,"cross_scope":false}]'
+            '[{"content":"Alice喜欢辣的食物","kind":"semantic","importance":0.8,"cross_scope":false}]'
         )
         await plugin.handle_after_process(message=make_message("我喜欢吃辣的"))
         await plugin._drain_extractions()
@@ -921,7 +984,7 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
         plugin._ctx.llm.reply = (
             '[{"content":"群里的记忆","kind":"semantic","importance":0.8,"cross_scope":false}]'
         )
-        await plugin.handle_after_process(message=make_message("在群里说", group_id="1127155154"))
+        await plugin.handle_after_process(message=make_message("在群里说", group_id="3000000003"))
         await plugin._drain_extractions()
         engine = plugin._engine
         self.assertEqual(engine.store.count("qq:session:sess-1"), 1)
@@ -938,15 +1001,15 @@ class TestMaiBotAdapter(unittest.IsolatedAsyncioTestCase):
     async def test_idle_flush_extracts_short_conversations(self):
         """一天只聊两句的机器人，也要能抽出记忆。
 
-        实机发现：许杏玖的群里和私聊各只来了 2 条消息，
+        实机发现：BotName的群里和私聊各只来了 2 条消息，
         而 extract_every_n=3 —— 永远攒不到阈值，记忆一直是空的。
         所以加了「会话安静下来就冲刷」。
         """
 
         plugin = self.plugin
         plugin._ctx.llm.reply = (
-            '[{"content":"季怡喜欢辣的食物","kind":"semantic","importance":0.8,'
-            '"subject":"季怡","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"Alice喜欢辣的食物","kind":"semantic","importance":0.8,'
+            '"subject":"Alice","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         # 复现实机配置：攒够 3 条才抽
         plugin.config.memory.extract_every_n = 3

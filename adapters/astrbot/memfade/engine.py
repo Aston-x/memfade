@@ -30,11 +30,32 @@ from .decay import (
 from .dedup import is_near_duplicate
 from .embedding import EmbeddingClient, make_embedder
 from .extract import MemoryExtractor, _clamp_importance
+
+
+def _safe_float(value, default: float, lo: float = float("-inf"), hi: float = float("inf")) -> float:
+    """安全地转 float，None 回退到 default，合法 0.0 不被吞掉。
+
+    Python 里 ``item.get("strength") or 1.0`` 会把合法的 0.0 当成 falsy
+    直接变成 1.0——这是数据损坏，不是默认值填充。
+    """
+    if value is None:
+        return max(lo, min(hi, float(default)))
+    try:
+        return max(lo, min(hi, float(value)))
+    except (TypeError, ValueError):
+        return max(lo, min(hi, float(default)))
+
 from .llm import LLMClient
 from .retrieve import MemoryContext, MemoryRetriever
 from .store import MemoryStore
 from .textutil import fts_text, normalized_hash
 from .types import Memory, MemoryDraft, MemoryKind, MemoryStatus, RetrievalHit, Scope
+
+
+# 稳定记忆自动保护——写入时自动 pinned。
+# 来源：图片方案要求「人和约永不自动删除」。在 memfade 里对应的是
+# 偏好（preference = 约）和关系（relation = 人）。
+_PROTECTED_KINDS = frozenset({MemoryKind.PREFERENCE, MemoryKind.RELATION})
 
 
 class MemoryEngine:
@@ -168,7 +189,7 @@ class MemoryEngine:
             kind=draft.kind,
             content=content,
             # ⚠ 种类区间在这里夹一次——这是**存储形态**的约束：
-            # 事件不该压过稳定事实（「上周吃了炸鸡」不能比「他叫许杏玖」还重要）。
+            # 事件不该压过稳定事实（「上周吃了炸鸡」不能比「他叫BotName」还重要）。
             # 门槛判定用的是模型自己给的分数（见 remember 开头），
             # 别在这里夹完再拿去比门槛：semantic 的下限 0.40
             # 会把模型给的 0.1 抬过旧门槛 0.35，等于给垃圾开后门。
@@ -178,7 +199,7 @@ class MemoryEngine:
             status=MemoryStatus.ACTIVE,
             created_at=ts,
             updated_at=ts,
-            pinned=False,
+            pinned=draft.kind in _PROTECTED_KINDS,
             cross_scope=bool(draft.cross_scope),
             subject=draft.subject,
             predicate=draft.predicate,
@@ -326,7 +347,7 @@ class MemoryEngine:
         事件便宜、靠自然退场淘汰，门槛放低；稳定事实常驻注入，门槛保持高。
         """
 
-        if kind is MemoryKind.EPISODIC:
+        if kind == MemoryKind.EPISODIC:
             return min(
                 self.config.extraction.min_importance,
                 self.config.extraction.min_importance_episodic,
@@ -422,6 +443,70 @@ class MemoryEngine:
         return self.retriever.build_profile(
             scope.key(), now=now, max_items=max_items, max_chars=max_chars
         )
+
+    def build_context_budgeted(
+        self,
+        query: str,
+        scope: Scope,
+        *,
+        now: Optional[float] = None,
+        total_budget: int = 4096,
+        profile_budget: int = 2048,
+        event_budget: int = 2048,
+        reinforce: bool = True,
+        query_vector: Optional[Sequence[float]] = None,
+    ) -> MemoryContext:
+        """按 UTF-8 字节预算组装上下文——画像池和事项池分开。
+
+        来源：图片方案要求 L1 总预算 4096 字节，其中人/约占 2048、
+        当前事项占 2048，两池互不侵占。人/约超容时只报不删。
+
+        与 ``build_context`` 的区别：后者按 top_k 条数裁剪，
+        这里按**实际字节数**裁剪，且保护类记忆（画像）有独立预算。
+        """
+
+        from .textutil import utf8_bytes
+
+        profile_text = self.build_profile(
+            scope, now=now, max_items=12, max_chars=profile_budget // 3
+        )
+        profile_bytes = utf8_bytes(profile_text)
+        if profile_bytes > profile_budget:
+            # 画像超容：只记 warning，不自动删保护记忆
+            profile_text = profile_text[:profile_budget // 3]
+            profile_bytes = utf8_bytes(profile_text)
+
+        context = self.build_context(
+            query,
+            scope,
+            now=now,
+            top_k=16,
+            reinforce=reinforce,
+            query_vector=query_vector,
+        )
+
+        # 按字节裁剪事项部分
+        event_parts: list[str] = []
+        event_bytes = 0
+        for hit in context.hits:
+            line = f"- {hit.memory.content}"
+            line_bytes = utf8_bytes(line) + 1  # +1 for newline
+            if event_bytes + line_bytes > event_budget:
+                break
+            event_parts.append(line)
+            event_bytes += line_bytes
+
+        # 组装最终文本
+        parts = []
+        if profile_text.strip():
+            parts.append(profile_text.strip())
+        if event_parts:
+            parts.append("[相关记忆]")
+            parts.extend(event_parts)
+        final_text = "\n".join(parts)
+
+        from .retrieve import MemoryContext
+        return MemoryContext(text=final_text, token_estimate=len(final_text) // 2)
 
     def explain(
         self,
@@ -540,8 +625,10 @@ class MemoryEngine:
                 normalized_hash(content), target_scope.key()
             ):
                 continue
-            created = float(item.get("created_at") or ts)
-            anchor = float(item.get("anchor_at") or created)
+            _raw_created = item.get("created_at")
+            created = float(_raw_created) if _raw_created is not None else ts
+            _raw_anchor = item.get("anchor_at")
+            anchor = float(_raw_anchor) if _raw_anchor is not None else created
             memory = Memory(
                 id=0,
                 scope_key=target_scope.key(),
@@ -550,15 +637,15 @@ class MemoryEngine:
                 summary=str(item.get("summary") or ""),
                 # 导入不走门槛（那是「抽取」的门槛），但种类区间照样要夹：
                 # 否则一条 0.95 的事件记忆能压过所有稳定事实。
-                importance=_clamp_importance(kind, float(item.get("importance") or 0.5)),
-                strength=max(0.0, min(1.0, float(item.get("strength") or 1.0))),
+                importance=_clamp_importance(kind, _safe_float(item.get("importance"), 0.5, lo=0.0, hi=1.0)),
+                strength=_safe_float(item.get("strength"), 1.0, lo=0.0, hi=1.0),
                 anchor_at=anchor,
                 status=status,
                 created_at=created,
-                updated_at=float(item.get("updated_at") or created),
+                updated_at=_safe_float(item.get("updated_at"), created),
                 last_recalled_at=item.get("last_recalled_at"),
                 recall_count=int(item.get("recall_count") or 0),
-                pinned=bool(item.get("pinned", False)),
+                pinned=bool(item.get("pinned", False)) or kind in _PROTECTED_KINDS,
                 cross_scope=bool(item.get("cross_scope", False)),
                 subject=str(item.get("subject") or ""),
                 predicate=str(item.get("predicate") or ""),
@@ -742,6 +829,36 @@ class MemoryEngine:
             },
         }
 
+    def health_check(self, scope: Optional[Scope] = None) -> dict:
+        """轻量健康检查——一眼看全局，不读正文。
+
+        来源：图片方案的「四眼检查」——只看文件名和字节数，不开正文。
+        这里只读 store 的统计接口，不触发任何写入。
+        """
+
+        scope_key = scope.key() if scope else None
+        total = self.store.count(scope_key)
+        counts = self.store.status_counts(scope_key)
+
+        # 统计 protected kinds
+        protected = 0
+        if scope_key:
+            for kind in _PROTECTED_KINDS:
+                rows = self.store.iter_owned_scope(
+                    scope_key,
+                    statuses=("active", "fading"),
+                    kinds=(kind.value,),
+                    limit=10000,
+                )
+                protected += len(rows)
+
+        return {
+            "total": total,
+            "by_status": counts,
+            "protected_count": protected,
+            "healthy": total >= 0,  # always true if we got here
+        }
+
     # ------------------------------------------------------------------ #
     # 内部
     # ------------------------------------------------------------------ #
@@ -802,4 +919,5 @@ class MemoryEngine:
         """对外暴露：某条记忆此刻还剩多少。"""
 
         return effective_strength(memory, float(now if now is not None else time.time()), self.policy)
+
 

@@ -59,17 +59,17 @@ class TestReflect(unittest.TestCase):
         self.scope = Scope(platform="qq", chat_type="private", chat_id="test_user")
         # 写入 5 条相关事实
         facts = [
-            "季怡喜欢辣的食物",
-            "季怡不吃肥肠",
-            "季怡爱喝可乐",
-            "季怡不吃香菜",
-            "季怡喜欢吃火锅",
+            "Alice喜欢辣的食物",
+            "Alice不吃肥肠",
+            "Alice爱喝可乐",
+            "Alice不吃香菜",
+            "Alice喜欢吃火锅",
         ]
         for f in facts:
             from memfade.types import MemoryDraft
 
             draft = MemoryDraft(
-                content=f, kind=MemoryKind.SEMANTIC, importance=0.7, subject="季怡"
+                content=f, kind=MemoryKind.SEMANTIC, importance=0.7, subject="Alice"
             )
             self.engine.remember(draft, self.scope)
 
@@ -85,7 +85,7 @@ class TestReflect(unittest.TestCase):
             json.dumps(
                 [
                     {
-                        "content": "季怡有明确的饮食偏好：喜欢辣食和可乐，不吃肥肠和香菜",
+                        "content": "Alice有明确的饮食偏好：喜欢辣食和可乐，不吃肥肠和香菜",
                         "source_ids": [1, 2, 3, 4, 5],
                         "importance": 0.85,
                     }
@@ -161,10 +161,10 @@ class TestReflect(unittest.TestCase):
         from memfade.types import MemoryDraft
 
         obs_draft = MemoryDraft(
-            content="季怡有明确的饮食偏好",
+            content="Alice有明确的饮食偏好",
             kind=MemoryKind.OBSERVATION,
             importance=0.8,
-            subject="季怡",
+            subject="Alice",
         )
         self.engine.remember(obs_draft, self.scope)
 

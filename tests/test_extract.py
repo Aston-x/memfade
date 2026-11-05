@@ -30,9 +30,9 @@ class TestRuleExtraction(unittest.IsolatedAsyncioTestCase):
         self.extractor = MemoryExtractor(llm=None)
 
     async def test_extracts_name(self):
-        result = await self.extractor.extract([{"role": "user", "content": "我叫许杏玖"}])
+        result = await self.extractor.extract([{"role": "user", "content": "我叫BotName"}])
         self.assertTrue(result.drafts)
-        self.assertIn("许杏玖", result.drafts[0].content)
+        self.assertIn("BotName", result.drafts[0].content)
 
     async def test_extracts_preference(self):
         result = await self.extractor.extract([{"role": "user", "content": "我最喜欢吃辣的东西"}])
@@ -77,15 +77,15 @@ class TestLLMExtraction(unittest.IsolatedAsyncioTestCase):
 
     async def test_parses_json(self):
         reply = (
-            '[{"content":"许杏玖喜欢辣的食物","kind":"semantic","importance":0.8,'
-            '"subject":"许杏玖","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
+            '[{"content":"BotName喜欢辣的食物","kind":"semantic","importance":0.8,'
+            '"subject":"BotName","predicate":"喜欢","object":"辣的食物","cross_scope":false}]'
         )
         extractor = MemoryExtractor(llm=FakeLLM(reply))
         result = await extractor.extract([{"role": "user", "content": "我喜欢辣的"}])
         self.assertTrue(result.used_llm)
         self.assertEqual(len(result.drafts), 1)
         self.assertEqual(result.drafts[0].kind, MemoryKind.SEMANTIC)
-        self.assertEqual(result.drafts[0].subject, "许杏玖")
+        self.assertEqual(result.drafts[0].subject, "BotName")
 
     async def test_parses_fenced_json(self):
         reply = '```json\n[{"content":"测试","kind":"semantic","importance":0.7}]\n```'
@@ -112,10 +112,10 @@ class TestLLMExtraction(unittest.IsolatedAsyncioTestCase):
         """
 
         reply = (
-            '[{"content":"季怡在做小红书账号，发AI绘画内容，目标是靠流量和接单赚钱，'
+            '[{"content":"Alice在做小红书账号，发AI绘画内容，目标是靠流量和接单赚钱，'
             '10月起零关注零粉丝，只有几个赞，曾被卖家临时加价拉黑二十块",'
             '"kind":"semantic","importance":0.8,'
-            '"subject":"季怡","predicate":"运营","object":"小红书账号"}]'
+            '"subject":"Alice","predicate":"运营","object":"小红书账号"}]'
         )
         extractor = MemoryExtractor(llm=FakeLLM(reply))
         result = await extractor.extract([{"role": "user", "content": "x"}])
@@ -123,12 +123,12 @@ class TestLLMExtraction(unittest.IsolatedAsyncioTestCase):
         for draft in result.drafts:
             self.assertLessEqual(len(draft.content), 40)
         # 三元组只挂第一条
-        self.assertEqual(result.drafts[0].subject, "季怡")
+        self.assertEqual(result.drafts[0].subject, "Alice")
         self.assertEqual(result.drafts[1].subject, "")
 
     async def test_falls_back_to_rules_on_error(self):
         extractor = MemoryExtractor(llm=FakeLLM(raises=True))
-        result = await extractor.extract([{"role": "user", "content": "我叫许杏玖"}])
+        result = await extractor.extract([{"role": "user", "content": "我叫BotName"}])
         self.assertFalse(result.used_llm)
         self.assertTrue(result.drafts, "LLM 挂了要能退化到规则抽取")
         self.assertTrue(result.error)
@@ -141,7 +141,7 @@ class TestLLMExtraction(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result.drafts[0].cross_scope)
 
 
-class TestAtomicWrite(unittest.TestCase):
+class TestAtomicWrite(unittest.IsolatedAsyncioTestCase):
     """引擎级的「一件事一条」写入。"""
 
     def setUp(self):
@@ -157,11 +157,11 @@ class TestAtomicWrite(unittest.TestCase):
 
     def test_long_content_is_split(self):
         draft = MemoryDraft(
-            content="季怡在做小红书账号，发AI绘画内容，目标是靠流量和接单赚钱，"
+            content="Alice在做小红书账号，发AI绘画内容，目标是靠流量和接单赚钱，"
             "10月起零关注零粉丝，只有几个赞，曾被卖家临时加价拉黑二十块",
             kind=MemoryKind.SEMANTIC,
             importance=0.9,
-            subject="季怡",
+            subject="Alice",
             predicate="运营",
             object="小红书账号",
         )
@@ -170,14 +170,14 @@ class TestAtomicWrite(unittest.TestCase):
         for memory in written:
             self.assertLessEqual(len(memory.content), 40)
         # 三元组只挂第一条
-        self.assertEqual(written[0].subject, "季怡")
+        self.assertEqual(written[0].subject, "Alice")
         self.assertEqual(written[1].subject, "")
 
     def test_short_content_is_one_memory(self):
-        draft = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9)
+        draft = MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9)
         written = self.engine.remember_atomic(draft, self.scope)
         self.assertEqual(len(written), 1)
-        self.assertEqual(written[0].content, "许杏玖喜欢辣的食物")
+        self.assertEqual(written[0].content, "BotName喜欢辣的食物")
         self.assertEqual(written[0].subject, "")
 
     async def test_extracted_memory_records_where_it_came_from(self):
@@ -188,7 +188,7 @@ class TestAtomicWrite(unittest.TestCase):
                 from memfade.extract import ExtractionResult
 
                 return ExtractionResult(
-                    drafts=[MemoryDraft(content="许杏玖喜欢辣的食物", importance=0.9)]
+                    drafts=[MemoryDraft(content="BotName喜欢辣的食物", importance=0.9)]
                 )
 
         engine, path, config = temp_engine()
@@ -209,14 +209,14 @@ class TestAtomicWrite(unittest.TestCase):
 
 class TestGist(unittest.IsolatedAsyncioTestCase):
     async def test_llm_gist(self):
-        reply = "和许杏玖一起吃了炸鸡"
+        reply = "和BotName一起吃了炸鸡"
         extractor = MemoryExtractor(llm=FakeLLM(reply))
-        gist = await extractor.summarize("上周三下午和许杏玖一起去楼下吃了炸鸡还喝了奶茶")
-        self.assertEqual(gist, "和许杏玖一起吃了炸鸡")
+        gist = await extractor.summarize("上周三下午和BotName一起去楼下吃了炸鸡还喝了奶茶")
+        self.assertEqual(gist, "和BotName一起吃了炸鸡")
 
     async def test_rule_gist_fallback(self):
         extractor = MemoryExtractor(llm=FakeLLM(raises=True))
-        gist = await extractor.summarize("上周三下午和许杏玖一起去楼下吃了炸鸡，还喝了奶茶")
+        gist = await extractor.summarize("上周三下午和BotName一起去楼下吃了炸鸡，还喝了奶茶")
         self.assertTrue(gist)
         self.assertLessEqual(len(gist), 45)
 
@@ -251,7 +251,7 @@ class TestImportanceBounds(unittest.IsolatedAsyncioTestCase):
                     os.remove(p)
 
     async def test_semantic_floored(self):
-        reply = '[{"content":"他叫许杏玖","kind":"semantic","importance":0.05}]'
+        reply = '[{"content":"他叫BotName","kind":"semantic","importance":0.05}]'
         extractor = MemoryExtractor(llm=FakeLLM(reply))
         result = await extractor.extract([{"role": "user", "content": "x"}])
         self.assertTrue(result.drafts)
@@ -262,7 +262,7 @@ class TestImportanceBounds(unittest.IsolatedAsyncioTestCase):
             # 抽取出来的低分事实会被门槛拦掉（见下一个用例）；
             # 这里的下限夹紧走**导入**路径——导入不走门槛，但种类区间照样要夹。
             written = engine.import_memories(
-                [{"content": "他叫许杏玖", "kind": "semantic", "importance": 0.05}],
+                [{"content": "他叫BotName", "kind": "semantic", "importance": 0.05}],
                 scope,
             )
             self.assertTrue(written)
@@ -281,7 +281,7 @@ class TestImportanceBounds(unittest.IsolatedAsyncioTestCase):
         正好越过旧门槛 0.35 —— 模型不确定的东西照样入库。
         """
 
-        reply = '[{"content":"他也许叫许杏玖","kind":"semantic","importance":0.30}]'
+        reply = '[{"content":"他也许叫BotName","kind":"semantic","importance":0.30}]'
         extractor = MemoryExtractor(llm=FakeLLM(reply))
         result = await extractor.extract([{"role": "user", "content": "x"}])
         self.assertTrue(result.drafts)
@@ -348,19 +348,19 @@ class TestEditMemory(unittest.TestCase):
         return written.id
 
     def test_content_change_is_searchable_and_old_text_is_gone(self):
-        mid = self._remember("季怡每天只有一节课")
-        updated = self.engine.edit_memory(mid, content="季怡今天只有一节课")
+        mid = self._remember("Alice每天只有一节课")
+        updated = self.engine.edit_memory(mid, content="Alice今天只有一节课")
         self.assertIsNotNone(updated)
-        self.assertEqual(updated.content, "季怡今天只有一节课")
+        self.assertEqual(updated.content, "Alice今天只有一节课")
         hits = self.engine.recall("一节课", self.scope, top_k=5)
         self.assertTrue(hits)
-        self.assertEqual(hits[0].memory.content, "季怡今天只有一节课")
+        self.assertEqual(hits[0].memory.content, "Alice今天只有一节课")
         # 旧内容不该还能搜到（全文索引要跟着改写重建）。
         old = self.engine.recall("每天", self.scope, top_k=5)
         self.assertFalse([h for h in old if "每天" in h.memory.content])
 
     def test_kind_and_quote_are_settable(self):
-        mid = self._remember("季怡准备发一篇招人帖")
+        mid = self._remember("Alice准备发一篇招人帖")
         updated = self.engine.edit_memory(
             mid,
             kind=MemoryKind.EPISODIC,
@@ -376,7 +376,7 @@ class TestEditMemory(unittest.TestCase):
         self.assertIsNone(self.engine.edit_memory(999999, content="x"))
 
     def test_empty_content_is_rejected(self):
-        mid = self._remember("季怡每天只有一节课")
+        mid = self._remember("Alice每天只有一节课")
         self.assertIsNone(self.engine.edit_memory(mid, content="   "))
 
     def test_repair_finds_by_content_and_rewrites(self):
@@ -386,19 +386,19 @@ class TestEditMemory(unittest.TestCase):
 
         from memfade import split_repair_request
 
-        mid = self._remember("季怡每天只有一节课")
+        mid = self._remember("Alice每天只有一节课")
         updated = asyncio.run(
-            self.engine.repair(self.scope, "每天只有一节课", "季怡今天只有一节课")
+            self.engine.repair(self.scope, "每天只有一节课", "Alice今天只有一节课")
         )
         self.assertIsNotNone(updated)
-        self.assertEqual(updated.content, "季怡今天只有一节课")
-        self.assertEqual(updated.meta.get("previous_content"), "季怡每天只有一节课")
+        self.assertEqual(updated.content, "Alice今天只有一节课")
+        self.assertEqual(updated.meta.get("previous_content"), "Alice每天只有一节课")
         self.assertIsNotNone(self.engine.store.get(mid))
 
     def test_repair_needs_both_halves(self):
         import asyncio
 
-        self._remember("季怡每天只有一节课")
+        self._remember("Alice每天只有一节课")
         updated = asyncio.run(
             self.engine.repair(self.scope, "每天只有一节课", "")
         )
@@ -435,7 +435,7 @@ class TestEditMemory(unittest.TestCase):
 
         self.config.extraction.min_importance = 0.35
         mem = self.engine.remember(
-            MemoryDraft(content="他叫许杏玖", kind=MemoryKind.SEMANTIC, importance=0.25),
+            MemoryDraft(content="他叫BotName", kind=MemoryKind.SEMANTIC, importance=0.25),
             self.scope,
         )
         self.assertIsNone(mem, "稳定事实门槛要保持高")

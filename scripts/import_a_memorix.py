@@ -15,9 +15,9 @@
 用法：
 
     python scripts/import_a_memorix.py \
-        --source "G:/AI/许杏玖-MaiBot/MaiBot/data/a-memorix/metadata/metadata.db" \
-        --target "G:/AI/许杏玖-MaiBot/MaiBot/data/plugins/memfade.memory/memfade.db" \
-        --scope qq:private:1738157278 --dry-run
+        --source "G:/AI/BotName-MaiBot/MaiBot/data/a-memorix/metadata/metadata.db" \
+        --target "G:/AI/BotName-MaiBot/MaiBot/data/plugins/memfade.memory/memfade.db" \
+        --scope qq:private:1000000001 --dry-run
 """
 
 from __future__ import annotations
@@ -468,7 +468,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="把 A_Memorix 的旧事实迁进 memfade")
     parser.add_argument("--source", required=True, help="A_Memorix 的 metadata.db")
     parser.add_argument("--target", required=True, help="memfade 的 memfade.db")
-    parser.add_argument("--scope", default="", help="目标作用域，如 qq:private:1738157278")
+    parser.add_argument("--scope", default="", help="目标作用域，如 qq:private:1000000001")
     parser.add_argument("--cross-scope", action="store_true", help="允许跨会话共享（默认否）")
     parser.add_argument("--dry-run", action="store_true", help="只看会迁什么，不写库")
     parser.add_argument("--limit", type=int, default=0, help="最多迁多少条（0=不限）")

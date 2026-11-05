@@ -201,10 +201,10 @@ def _same_fact_different_tail(a: str, b: str) -> bool:
 
     判据：**足够长的共同前缀 + 不同的结尾**。
 
-    「许杏玖住在杭州」vs「许杏玖住在上海」→ 前缀「许杏玖住在」相同，
+    「BotName住在杭州」vs「BotName住在上海」→ 前缀「BotName住在」相同，
     结尾不同 → 是矛盾。
 
-    「季怡在做小红书账号」vs「季怡在备赛蓝桥杯」→ 前缀只有「季怡在」，
+    「Alice在做小红书账号」vs「Alice在备赛ProgrammingContest」→ 前缀只有「Alice在」，
     太短 → 不是矛盾。
 
     没有 subject/predicate 时，这是矛盾检测唯一的抓手。
@@ -218,7 +218,11 @@ def _same_fact_different_tail(a: str, b: str) -> bool:
     common = 0
     while common < min(len(na), len(nb)) and na[common] == nb[common]:
         common += 1
-    if common < 4:
+    # 按 UTF-8 字节判前缀长度，避免 ASCII 人名（如 "BotName"）
+    # 比中文人名（如 "许杏玖"）多占字符数导致误判矛盾。
+    # 10 字节 ≈ 3 个汉字 + 1 个动词，刚好区分"同一件事"和"同一人的不同事"。
+    common_bytes = len(na[:common].encode("utf-8"))
+    if common_bytes < 10:
         return False
     tail_a, tail_b = na[common:], nb[common:]
     if not tail_a or not tail_b:
@@ -514,9 +518,9 @@ class MemoryStore:
         """按 (谁, 怎么样, 什么) 找同一条事实。
 
         这是比文本相似度更硬的去重依据：
-        「季怡已经开始玩《影之刃零》」和「季怡已经在玩《影之刃零》」
+        「Alice已经开始玩《影之刃零》」和「Alice已经在玩《影之刃零》」
         文本 Dice 只有 0.706（够不着 0.82 的阈值），
-        但拆成三元组是同一个 (季怡, 玩, 影之刃零) → 是同一条。
+        但拆成三元组是同一个 (Alice, 玩, 影之刃零) → 是同一条。
         """
 
         if not (subject and predicate and object_value):
@@ -551,6 +555,43 @@ class MemoryStore:
         with self._lock:
             rows = self._conn.execute(
                 f"SELECT * FROM memories WHERE {' AND '.join(clauses)} ORDER BY id LIMIT ?", params
+            ).fetchall()
+        return [_row_to_memory(r) for r in rows]
+
+    def iter_owned_scope(
+        self,
+        scope_key: str,
+        *,
+        statuses: Optional[Sequence[str]] = None,
+        kinds: Optional[Sequence[str]] = None,
+        limit: int = 500,
+        order_by: str = "id",
+    ) -> list[Memory]:
+        """只取当前作用域**拥有**的记忆——不包含 cross_scope 共享条目。
+
+        用于维护操作（去重、合并、淘汰、冲突仲裁）：这些操作只能改动自己
+        会话里的记忆，不能碰别的会话共享过来的条目——否则 A 会话的 trim
+        会把 B 会话共享来的记忆也算进配额甚至直接删掉。
+
+        ``order_by`` 允许 ``"id"`` 或 ``"updated_at DESC"``，reflect 等需要
+        按时间排序的场景可以直接在 SQL 层分页，避免 Python 侧截断漏掉新记录。
+        """
+
+        clauses = ["scope_key=?"]
+        params: list[Any] = [scope_key]
+        if statuses:
+            clauses.append("status IN (" + ",".join("?" * len(statuses)) + ")")
+            params.extend(statuses)
+        if kinds:
+            clauses.append("kind IN (" + ",".join("?" * len(kinds)) + ")")
+            params.extend(kinds)
+        _VALID_ORDER = {"id": "id", "updated_at DESC": "updated_at DESC", "updated_at": "updated_at"}
+        order_col = _VALID_ORDER.get(order_by, "id")
+        params.append(int(limit))
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM memories WHERE {' AND '.join(clauses)} ORDER BY {order_col} LIMIT ?",
+                params,
             ).fetchall()
         return [_row_to_memory(r) for r in rows]
 
@@ -659,7 +700,7 @@ class MemoryStore:
         """按「内容里含有这些字」找记忆。返回 [(memory_id, 命中率)]。
 
         为什么不用 FTS：全文索引里存的是二元组，查询「辣」是**一个**词，
-        而「许杏玖喜欢辣的食物」的二元组是「欢辣」「辣的」——永远对不上。
+        而「BotName喜欢辣的食物」的二元组是「欢辣」「辣的」——永远对不上。
         把单字也塞进同一个 FTS 表又会污染 BM25 的长度归一化
         （长记忆被压得更狠，重要的长约定会被短条目反超）。
 
@@ -932,10 +973,10 @@ class MemoryStore:
            （「他住在北京」后来变成「他住在上海」）；
         2. **兜底**——内容有足够长的共同前缀、但结尾不同。
            模型没填 subject/predicate 时也能抓到
-           （「许杏玖住在杭州」vs「许杏玖住在上海」）。
+           （「BotName住在杭州」vs「BotName住在上海」）。
         """
 
-        rows = self.iter_scope(scope_key, statuses=("active", "fading"), limit=limit)
+        rows = self.iter_owned_scope(scope_key, statuses=("active", "fading"), limit=limit)
         buckets: dict[tuple[str, str], list[Memory]] = {}
         for mem in rows:
             if not mem.subject or not mem.predicate:

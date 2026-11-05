@@ -18,9 +18,9 @@
     # 2) 写一份清单
     cat > patch.json <<'JSON'
     [
-      {"id": 125, "content": "季怡只有起晚了才不吃早饭直接去早自习",
+      {"id": 125, "content": "Alice只有起晚了才不吃早饭直接去早自习",
        "kind": "semantic", "importance": 0.7,
-       "subject": "季怡", "predicate": "起晚了才", "object": "不吃早饭直接去早自习",
+       "subject": "Alice", "predicate": "起晚了才", "object": "不吃早饭直接去早自习",
        "quote": "只有起晚了才会不吃早餐直接去"},
       {"delete": 127}
     ]

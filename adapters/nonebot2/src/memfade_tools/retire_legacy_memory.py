@@ -9,7 +9,7 @@
     而且旧的**没有淡化引擎**（段落一旦写进去就赖着不走，
     这正是「总提旧事」的根源）。
 2. **模型能从旧的检索**：宿主给麦麦挂了一个「检索长期记忆」的工具，
-    旧的库里有一条「许杏玖称呼聊天助手为"大肥鱼"」，
+    旧的库里有一条「BotName称呼聊天助手为"大肥鱼"」，
     planner 就把它当事实用了——而这条是**主人在引用机器人时**被记下来的。
 3. **画像互相覆盖**：旧的会刷新「人物画像快照」，
     新的也生成「关于对方」的画像块，两块同时进 prompt。
@@ -40,7 +40,7 @@ fuzzy_modify_enabled = false                    # 记忆修正走新插件的整
 
 ## 用法
 
-    python scripts/retire_legacy_memory.py --host-root "G:/AI/许杏玖-MaiBot/MaiBot"
+    python scripts/retire_legacy_memory.py --host-root "G:/AI/BotName-MaiBot/MaiBot"
 """
 
 from __future__ import annotations

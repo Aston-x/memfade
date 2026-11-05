@@ -95,7 +95,7 @@ from .scopes import (  # noqa: E402
 
 
 PLUGIN_NAME = "astrbot_plugin_memfade"
-PLUGIN_VERSION = "0.4.0"
+PLUGIN_VERSION = "0.4.1"
 
 
 def _plugin_dir() -> str:

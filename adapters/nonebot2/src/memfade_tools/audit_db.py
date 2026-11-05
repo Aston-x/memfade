@@ -6,7 +6,7 @@
 
 用法：
     python scripts/audit_db.py --db <memfade.db> [--show-fts]
-    python scripts/audit_db.py --db <memfade.db> --focus 季怡 --self-name 许杏玖
+    python scripts/audit_db.py --db <memfade.db> --focus Alice --self-name BotName
 """
 
 from __future__ import annotations

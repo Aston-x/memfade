@@ -138,10 +138,10 @@ class TestLangBotCommands(unittest.IsolatedAsyncioTestCase):
         scope = self.command._scope(self._ctx())
         self.plugin.engine.remember(
             MemoryDraft(
-                content="季怡喜欢辣的食物",
+                content="Alice喜欢辣的食物",
                 kind=MemoryKind.PREFERENCE,
                 importance=0.8,
-                subject="季怡",
+                subject="Alice",
                 predicate="喜欢",
                 object="辣的食物",
             ),
@@ -149,7 +149,7 @@ class TestLangBotCommands(unittest.IsolatedAsyncioTestCase):
         )
         text = await self._collect(self.command.status(self._ctx()))
         self.assertIn("记住了", text)
-        self.assertIn("季怡喜欢辣的食物", text)
+        self.assertIn("Alice喜欢辣的食物", text)
 
     async def test_search_command_requires_a_match(self):
         from memfade.types import MemoryDraft, MemoryKind
@@ -157,10 +157,10 @@ class TestLangBotCommands(unittest.IsolatedAsyncioTestCase):
         scope = self.command._scope(self._ctx())
         self.plugin.engine.remember(
             MemoryDraft(
-                content="季怡喜欢辣的食物",
+                content="Alice喜欢辣的食物",
                 kind=MemoryKind.PREFERENCE,
                 importance=0.8,
-                subject="季怡",
+                subject="Alice",
                 predicate="喜欢",
                 object="辣的食物",
             ),
@@ -254,14 +254,14 @@ class TestLangBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         scope = Scope(platform="langbot", chat_type="group", chat_id="sess-1")
         self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
         injector = self.MemFadeInjector()
         injector.plugin = self.plugin
         ctx = self._event_ctx("今天吃什么呢")
         await injector._inject(ctx)
         contents = [m.content for m in ctx.event.default_prompt]
-        self.assertTrue(any("许杏玖喜欢吃辣的东西" in str(c) for c in contents), "记忆没进 default_prompt")
+        self.assertTrue(any("BotName喜欢吃辣的东西" in str(c) for c in contents), "记忆没进 default_prompt")
 
     async def test_no_injection_without_memories(self):
         injector = self.MemFadeInjector()

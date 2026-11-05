@@ -6,8 +6,8 @@
 **规范化时模型自己编**——最后这种最难发现，因为编出来的东西
 读起来特别像真的。
 
-真事：「季怡想在小红书上卖AI头像赚钱」。
-编的：「季怡运营小红书账号，简介"AI炼丹师，炼到什么发什么喵"」
+真事：「Alice想在小红书上卖AI头像赚钱」。
+编的：「Alice运营小红书账号，简介"AI炼丹师，炼到什么发什么喵"」
 ——「AI炼丹师」这四个字在 630 条聊天记录里**一次都没出现过**，
 却是库里躺得好好的的一条记忆。
 
@@ -18,8 +18,8 @@
 ## 怎么用
 
     python scripts/verify_against_chat.py \
-        --db "G:/AI/许杏玖-MaiBot/MaiBot/data/plugins/memfade.memory/memfade.db" \
-        --messages "G:/AI/许杏玖-MaiBot/MaiBot/data/MaiBot.db"
+        --db "G:/AI/BotName-MaiBot/MaiBot/data/plugins/memfade.memory/memfade.db" \
+        --messages "G:/AI/BotName-MaiBot/MaiBot/data/MaiBot.db"
 """
 
 from __future__ import annotations

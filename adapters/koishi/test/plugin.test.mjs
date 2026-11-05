@@ -87,11 +87,11 @@ describe('memfade koishi 插件', () => {
   it('群会话按群号隔离，私聊按用户号', () => {
     const service = new MemoryService({ logger: () => undefined }, {})
     const group = service.scopeOf({
-      channel: { id: '1127155154', type: 'group' },
+      channel: { id: '3000000003', type: 'group' },
       author: { id: 'u1' },
     })
     assert.equal(group.chat_type, 'group')
-    assert.equal(group.chat_id, '1127155154')
+    assert.equal(group.chat_id, '3000000003')
 
     const priv = service.scopeOf({ author: { id: 'u1' } })
     assert.equal(priv.chat_type, 'private')
@@ -108,7 +108,7 @@ describe('memfade koishi 插件', () => {
     })
     const session = { channel: { id: 'koishi-group', type: 'group' }, author: { id: 'u1' }, text: '你好' }
     // 侧车库是跨轮次复用的，内容要唯一，否则第二次跑会被去重挡掉
-    const content = `许杏玖喜欢辣的东西 #${Date.now()}`
+    const content = `BotName喜欢辣的东西 #${Date.now()}`
     const written = await service.remember(session, content, 'semantic', 0.9)
     assert.equal(written.ok, true)
     assert.ok(written.written >= 1)

@@ -28,10 +28,10 @@ class TestRealWorldCases(unittest.TestCase):
         """「今天只有一节课」被写成「每天只有一节课」。"""
 
         draft = MemoryDraft(
-            content="季怡每天只有一节课",
+            content="Alice每天只有一节课",
             kind=MemoryKind.SEMANTIC,
             importance=0.6,
-            subject="季怡",
+            subject="Alice",
             predicate="每天只有",
             object="一节课",
         )
@@ -46,16 +46,16 @@ class TestRealWorldCases(unittest.TestCase):
         """「这次你用这种语气」被写成「希望你用这种语气」。"""
 
         draft = MemoryDraft(
-            content="季怡希望小玖用平时与别人说话的语气",
+            content="Alice希望Bot用平时与别人说话的语气",
             kind=MemoryKind.PREFERENCE,
             importance=0.75,
-            subject="季怡",
+            subject="Alice",
             predicate="希望",
-            object="小玖用平时与别人说话的语气",
+            object="Bot用平时与别人说话的语气",
         )
         messages = [
             _msg("你要用你的语气，表示占领了我的账号，然后发布招人动态"),
-            _msg("好，我家小玖最棒了，语气我想要你平时和别人说话的那种，不是和我说话的那种"),
+            _msg("好，我家Bot最棒了，语气我想要你平时和别人说话的那种，不是和我说话的那种"),
         ]
         kept, notes = guard_drafts([draft], messages)
         self.assertEqual(len(kept), 1)
@@ -66,10 +66,10 @@ class TestRealWorldCases(unittest.TestCase):
         """「发图会被拦、暂时发不了」是眼下如此，不该进记忆库。"""
 
         draft = MemoryDraft(
-            content="季怡发图时会被拦截，暂时发不了",
+            content="Alice发图时会被拦截，暂时发不了",
             kind=MemoryKind.EPISODIC,
             importance=0.35,
-            subject="季怡",
+            subject="Alice",
             predicate="发送被拦截",
             object="图片",
         )
@@ -82,10 +82,10 @@ class TestRealWorldCases(unittest.TestCase):
         """正常的一次性事件不该被误伤。"""
 
         draft = MemoryDraft(
-            content="季怡当天起床后直接去上早自习",
+            content="Alice当天起床后直接去上早自习",
             kind=MemoryKind.EPISODIC,
             importance=0.32,
-            subject="季怡",
+            subject="Alice",
             predicate="参加",
             object="早自习",
         )
@@ -99,10 +99,10 @@ class TestKeepRealFacts(unittest.TestCase):
 
     def test_stated_preference_is_kept(self):
         draft = MemoryDraft(
-            content="季怡最喜欢吃辣的食物",
+            content="Alice最喜欢吃辣的食物",
             kind=MemoryKind.PREFERENCE,
             importance=0.8,
-            subject="季怡",
+            subject="Alice",
             predicate="喜欢",
             object="辣的食物",
         )
@@ -113,10 +113,10 @@ class TestKeepRealFacts(unittest.TestCase):
 
     def test_explicit_routine_is_kept(self):
         draft = MemoryDraft(
-            content="季怡每天早上都跑三公里",
+            content="Alice每天早上都跑三公里",
             kind=MemoryKind.SEMANTIC,
             importance=0.8,
-            subject="季怡",
+            subject="Alice",
             predicate="每天跑",
             object="三公里",
         )
@@ -127,10 +127,10 @@ class TestKeepRealFacts(unittest.TestCase):
 
     def test_plain_fact_is_kept(self):
         draft = MemoryDraft(
-            content="季怡住在杭州",
+            content="Alice住在杭州",
             kind=MemoryKind.SEMANTIC,
             importance=0.8,
-            subject="季怡",
+            subject="Alice",
             predicate="住在",
             object="杭州",
         )
@@ -143,10 +143,10 @@ class TestKeepRealFacts(unittest.TestCase):
         """「今天」的内容不该当稳定事实，但也不该丢。"""
 
         draft = MemoryDraft(
-            content="季怡今天只上了一节课",
+            content="Alice今天只上了一节课",
             kind=MemoryKind.SEMANTIC,
             importance=0.7,
-            subject="季怡",
+            subject="Alice",
             predicate="今天只上",
             object="一节课",
         )
@@ -161,9 +161,9 @@ class TestEvidence(unittest.TestCase):
 
     def test_finds_the_source_sentence(self):
         draft = MemoryDraft(
-            content="季怡每天只有一节课",
+            content="Alice每天只有一节课",
             kind=MemoryKind.SEMANTIC,
-            subject="季怡",
+            subject="Alice",
             predicate="每天只有",
             object="一节课",
         )
@@ -178,9 +178,9 @@ class TestEvidence(unittest.TestCase):
         """机器人说过的话是上下文，不是用户的证词。"""
 
         draft = MemoryDraft(
-            content="季怡每天只有一节课",
+            content="Alice每天只有一节课",
             kind=MemoryKind.SEMANTIC,
-            subject="季怡",
+            subject="Alice",
             object="一节课",
         )
         evidence = find_evidence(draft, [_msg("一节课的事", role="assistant")])
@@ -189,9 +189,9 @@ class TestEvidence(unittest.TestCase):
 
     def test_evidence_is_stored_in_meta(self):
         draft = MemoryDraft(
-            content="季怡住在杭州",
+            content="Alice住在杭州",
             kind=MemoryKind.SEMANTIC,
-            subject="季怡",
+            subject="Alice",
             predicate="住在",
             object="杭州",
         )
@@ -203,7 +203,7 @@ class TestEvidence(unittest.TestCase):
 
 class TestDropRules(unittest.TestCase):
     def test_mood_is_dropped(self):
-        draft = MemoryDraft(content="季怡今天好累", kind=MemoryKind.EPISODIC, importance=0.4)
+        draft = MemoryDraft(content="Alice今天好累", kind=MemoryKind.EPISODIC, importance=0.4)
         kept, notes = guard_drafts([draft], [_msg("今天好累啊")])
         self.assertEqual(kept, [])
         self.assertIn("情绪", notes[0][1])
@@ -217,7 +217,7 @@ class TestDropRules(unittest.TestCase):
     def test_check_draft_without_evidence_keeps_stable_facts(self):
         """查不到依据时，宁可放过，也不能凭感觉把事实毙掉。"""
 
-        draft = MemoryDraft(content="季怡住在杭州", kind=MemoryKind.SEMANTIC, importance=0.8)
+        draft = MemoryDraft(content="Alice住在杭州", kind=MemoryKind.SEMANTIC, importance=0.8)
         verdict = check_draft(draft)
         self.assertEqual(verdict.action, "keep")
 
@@ -238,46 +238,46 @@ class TestRememberRequest(unittest.TestCase):
             importance=0.8,
             subject="不吃肥肠",
         )
-        verdict = check_remember_request(draft, focus_subjects=["季怡"])
+        verdict = check_remember_request(draft, focus_subjects=["Alice"])
         self.assertEqual(verdict.action, "drop")
         self.assertIn("跟要记的那个人没关系", verdict.reason)
 
     def test_content_without_the_focus_subject_is_dropped(self):
         draft = MemoryDraft(content="今天群里在打牌", kind=MemoryKind.EPISODIC)
-        verdict = check_remember_request(draft, focus_subjects=["季怡"])
+        verdict = check_remember_request(draft, focus_subjects=["Alice"])
         self.assertEqual(verdict.action, "drop")
 
     def test_about_the_right_person_is_kept(self):
         draft = MemoryDraft(
-            content="季怡答应周末一起去图书馆",
+            content="Alice答应周末一起去图书馆",
             kind=MemoryKind.SEMANTIC,
             importance=0.8,
-            subject="季怡",
+            subject="Alice",
         )
-        verdict = check_remember_request(draft, focus_subjects=["季怡"])
+        verdict = check_remember_request(draft, focus_subjects=["Alice"])
         self.assertEqual(verdict.action, "keep")
 
     def test_robot_own_facts_are_dropped(self):
         draft = MemoryDraft(
-            content="许杏玖欠季怡半首歌",
+            content="BotName欠Alice半首歌",
             kind=MemoryKind.SEMANTIC,
-            subject="许杏玖",
+            subject="BotName",
         )
-        # ⚠ 承诺类不该被误杀：主语是机器人，说的却是关于季怡的事。
-        verdict = check_remember_request(draft, focus_subjects=["季怡"])
+        # ⚠ 承诺类不该被误杀：主语是机器人，说的却是关于Alice的事。
+        verdict = check_remember_request(draft, focus_subjects=["Alice"])
         self.assertEqual(verdict.action, "keep")
 
     def test_robot_own_facts_are_dropped_without_focus_config(self):
         draft = MemoryDraft(
-            content="许杏玖最喜欢辣的食物",
+            content="BotName最喜欢辣的食物",
             kind=MemoryKind.PREFERENCE,
-            subject="许杏玖",
+            subject="BotName",
         )
-        verdict = check_remember_request(draft, self_names=["许杏玖"])
+        verdict = check_remember_request(draft, self_names=["BotName"])
         self.assertEqual(verdict.action, "drop")
 
     def test_transient_state_is_dropped(self):
-        draft = MemoryDraft(content="季怡现在发不了图", kind=MemoryKind.EPISODIC)
+        draft = MemoryDraft(content="Alice现在发不了图", kind=MemoryKind.EPISODIC)
         verdict = check_remember_request(draft)
         self.assertEqual(verdict.action, "drop")
 

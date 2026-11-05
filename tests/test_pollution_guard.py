@@ -6,10 +6,10 @@
 对应的事故：
 
 * 主人在群里引用机器人的「你昨晚一口气刷完Re」，
-  记忆库里多了一条「许杏玖昨晚一口气刷完了Re」——机器人认领了主人的话；
-* 主人转发蓝桥杯群公告求个总结，记忆库里多了一条
-  「季怡在备赛第18届蓝桥杯」——可主人明说过「我没跟你说过我要报名」；
-* 同一件事被记了八遍（「季怡已经购买《影之刃零》」系列）。
+  记忆库里多了一条「BotName昨晚一口气刷完了Re」——机器人认领了主人的话；
+* 主人转发ProgrammingContest群公告求个总结，记忆库里多了一条
+  「Alice在备赛第18届ProgrammingContest」——可主人明说过「我没跟你说过我要报名」；
+* 同一件事被记了八遍（「Alice已经购买《影之刃零》」系列）。
 """
 
 from __future__ import annotations
@@ -35,10 +35,10 @@ class TestSubjectPolicy(unittest.TestCase):
         """主语是机器人自己的，一律不入库。"""
 
         kept, dropped = filter_drafts(
-            [_draft("许杏玖昨晚一口气刷完了Re", "许杏玖")],
-            self_names=["许杏玖"],
-            participants=["季怡"],
-            default_subject="季怡",
+            [_draft("BotName昨晚一口气刷完了Re", "BotName")],
+            self_names=["BotName"],
+            participants=["Alice"],
+            default_subject="Alice",
         )
         self.assertEqual(kept, [])
         self.assertEqual(dropped[0][1], "self_fact")
@@ -48,8 +48,8 @@ class TestSubjectPolicy(unittest.TestCase):
 
         kept, dropped = filter_drafts(
             [_draft("《牧神记5》在2026年11月1日周日更新", "《牧神记5》")],
-            participants=["季怡"],
-            default_subject="季怡",
+            participants=["Alice"],
+            default_subject="Alice",
         )
         self.assertEqual(kept, [])
         self.assertEqual(dropped[0][1], "not_a_person")
@@ -59,14 +59,14 @@ class TestSubjectPolicy(unittest.TestCase):
 
         kept, dropped = filter_drafts(
             [
-                _draft("季怡喜欢辣的食物", "季怡"),
+                _draft("Alice喜欢辣的食物", "Alice"),
                 _draft("鸡柳的显卡跑不动两个模型", "鸡柳"),
             ],
-            focus_subjects=["季怡"],
-            participants=["季怡", "鸡柳"],
-            default_subject="季怡",
+            focus_subjects=["Alice"],
+            participants=["Alice", "鸡柳"],
+            default_subject="Alice",
         )
-        self.assertEqual([d.content for d in kept], ["季怡喜欢辣的食物"])
+        self.assertEqual([d.content for d in kept], ["Alice喜欢辣的食物"])
         self.assertEqual(dropped[0][1], "not_focus")
 
     def test_generic_subject_is_rewritten(self):
@@ -74,19 +74,19 @@ class TestSubjectPolicy(unittest.TestCase):
 
         kept, _ = filter_drafts(
             [_draft("他住在上海", "用户")],
-            participants=["季怡"],
-            default_subject="季怡",
+            participants=["Alice"],
+            default_subject="Alice",
         )
         self.assertEqual(len(kept), 1)
-        self.assertEqual(kept[0].subject, "季怡")
+        self.assertEqual(kept[0].subject, "Alice")
 
     def test_family_roles_are_people(self):
         """「妈妈」不是说话人，但确实是人——关系类记忆要留住。"""
 
         kept, dropped = filter_drafts(
-            [_draft("季怡的妈妈是小学老师", "妈妈")],
-            participants=["季怡"],
-            default_subject="季怡",
+            [_draft("Alice的妈妈是小学老师", "妈妈")],
+            participants=["Alice"],
+            default_subject="Alice",
         )
         self.assertEqual(len(kept), 1)
         self.assertEqual(dropped, [])
@@ -110,8 +110,8 @@ class TestSubjectPolicy(unittest.TestCase):
 
 class TestPrompt(unittest.TestCase):
     def test_subject_hint_is_injected(self):
-        prompt = build_extraction_prompt(ExtractionConfig(subject_hint="（许杏玖 / 季怡）"))
-        self.assertIn("（许杏玖 / 季怡）", prompt)
+        prompt = build_extraction_prompt(ExtractionConfig(subject_hint="（BotName / Alice）"))
+        self.assertIn("（BotName / Alice）", prompt)
         self.assertNotIn("@SUBJECT_HINT@", prompt)
 
     def test_prompt_forbids_self_and_forwarded_content(self):
@@ -142,11 +142,11 @@ class TestContextLine(unittest.TestCase):
         rendered = extractor._render(
             [
                 {"role": "assistant", "content": "Master，《影之刃零》买了吗"},
-                {"role": "user", "content": "买了", "speaker": "季怡"},
+                {"role": "user", "content": "买了", "speaker": "Alice"},
             ]
         )
         self.assertIn("机器人：Master，《影之刃零》买了吗", rendered)
-        self.assertIn("季怡：买了", rendered)
+        self.assertIn("Alice：买了", rendered)
 
     def test_assistant_line_is_not_a_participant(self):
         """机器人不是「要被记住的那个人」——它只是上下文。"""
@@ -154,19 +154,19 @@ class TestContextLine(unittest.TestCase):
         from memfade.extract import MemoryExtractor
 
         extractor = MemoryExtractor(
-            ExtractionConfig(focus_subjects=("季怡",), self_names=("许杏玖",))
+            ExtractionConfig(focus_subjects=("Alice",), self_names=("BotName",))
         )
         kept, dropped = extractor._apply_subject_policy(
             [
-                _draft("季怡买了《影之刃零》", "季怡"),
-                _draft("许杏玖昨晚刷完了Re", "许杏玖"),
+                _draft("Alice买了《影之刃零》", "Alice"),
+                _draft("BotName昨晚刷完了Re", "BotName"),
             ],
             [
                 {"role": "assistant", "content": "Master，《影之刃零》买了吗"},
-                {"role": "user", "content": "买了", "speaker": "季怡"},
+                {"role": "user", "content": "买了", "speaker": "Alice"},
             ],
         )
-        self.assertEqual([d.content for d in kept], ["季怡买了《影之刃零》"])
+        self.assertEqual([d.content for d in kept], ["Alice买了《影之刃零》"])
         self.assertEqual(dropped[0][1], "self_fact")
 
 
@@ -223,7 +223,7 @@ class TestHealthCheck(unittest.TestCase):
         config = MemFadeConfig.from_dict(
             {
                 "storage": {"db_path": str(tmpdir / "m.db"), "enable_vector": False},
-                "extraction": {"self_names": ("许杏玖",)},
+                "extraction": {"self_names": ("BotName",)},
             }
         )
         return MemoryEngine(config), Scope(platform="qq", chat_type="session", chat_id="s1")
@@ -235,11 +235,11 @@ class TestHealthCheck(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             engine, scope = self._engine(Path(tmp))
             engine.remember(
-                MemoryDraft(content="许杏玖昨晚一口气刷完了Re", subject="许杏玖", importance=0.7),
+                MemoryDraft(content="BotName昨晚一口气刷完了Re", subject="BotName", importance=0.7),
                 scope,
             )
             engine.remember(
-                MemoryDraft(content="季怡喜欢辣的食物", subject="季怡", importance=0.7),
+                MemoryDraft(content="Alice喜欢辣的食物", subject="Alice", importance=0.7),
                 scope,
             )
             report = engine.diagnose()

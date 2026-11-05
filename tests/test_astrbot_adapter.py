@@ -269,10 +269,10 @@ class TestAstrBotAdapterLogic(unittest.IsolatedAsyncioTestCase):
         scope = self.plugin._scopes_of(self._event("你好"))[-1]
         self.engine.remember(
             MemoryDraft(
-                content="季怡喜欢辣的食物",
+                content="Alice喜欢辣的食物",
                 kind=MemoryKind.PREFERENCE,
                 importance=0.8,
-                subject="季怡",
+                subject="Alice",
                 predicate="喜欢",
                 object="辣的食物",
             ),
@@ -280,7 +280,7 @@ class TestAstrBotAdapterLogic(unittest.IsolatedAsyncioTestCase):
         )
         text = await self._collect(self.plugin.memory_status(self._event("记忆 状态")))
         self.assertIn("记住了", text)
-        self.assertIn("季怡喜欢辣的食物", text)
+        self.assertIn("Alice喜欢辣的食物", text)
 
     async def test_memory_search_command_requires_a_match(self):
         """显式检索必须真命中——不把「最近写入」但无关的记忆混进来。"""
@@ -290,10 +290,10 @@ class TestAstrBotAdapterLogic(unittest.IsolatedAsyncioTestCase):
         scope = self.plugin._scopes_of(self._event("你好"))[-1]
         self.engine.remember(
             MemoryDraft(
-                content="季怡喜欢辣的食物",
+                content="Alice喜欢辣的食物",
                 kind=MemoryKind.PREFERENCE,
                 importance=0.8,
-                subject="季怡",
+                subject="Alice",
                 predicate="喜欢",
                 object="辣的食物",
             ),
@@ -317,13 +317,13 @@ class TestAstrBotAdapterLogic(unittest.IsolatedAsyncioTestCase):
 
     def test_scope_uses_group_when_present(self):
         """群聊要读两层：群级公共 + 当前说话人的人级私密。"""
-        event = self._event("你好", group_id="1127155154")
+        event = self._event("你好", group_id="3000000003")
         scopes = self.plugin._scopes_of(event)
         self.assertEqual(len(scopes), 2)
         self.assertEqual(scopes[0].chat_type, "group")
-        self.assertEqual(scopes[0].chat_id, "1127155154")
+        self.assertEqual(scopes[0].chat_id, "3000000003")
         self.assertEqual(scopes[1].chat_type, "group_user")
-        self.assertEqual(scopes[1].chat_id, "1127155154#u1")
+        self.assertEqual(scopes[1].chat_id, "3000000003#u1")
 
     def test_scope_falls_back_to_private(self):
         """私聊只有一层。"""
@@ -336,17 +336,17 @@ class TestAstrBotAdapterLogic(unittest.IsolatedAsyncioTestCase):
     async def test_injects_into_system_prompt(self):
         from memfade import MemoryDraft, MemoryKind, Scope
 
-        scope = Scope(platform="astrbot", chat_type="group", chat_id="1127155154")
+        scope = Scope(platform="astrbot", chat_type="group", chat_id="3000000003")
         self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
 
         class Request:
             system_prompt = "你是一个助手"
 
         request = Request()
-        event = self._event("今天吃什么呢", group_id="1127155154")
+        event = self._event("今天吃什么呢", group_id="3000000003")
         await self.plugin.on_llm_request(event, request)
-        self.assertIn("许杏玖喜欢吃辣的东西", request.system_prompt)
+        self.assertIn("BotName喜欢吃辣的东西", request.system_prompt)
         self.assertTrue(request.system_prompt.startswith("你是一个助手"), "不能覆盖原有 system_prompt")
 

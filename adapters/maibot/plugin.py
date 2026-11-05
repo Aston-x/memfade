@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -118,6 +119,10 @@ class MemorySectionConfig(PluginConfigBase):
     max_inject_tokens: int = Field(default=600, description="注入上下文的 token 预算")
     top_k: int = Field(default=8, description="每轮最多召回几条记忆")
     echo_max: int = Field(default=3, description="最多注入几条已淡出的旧记忆")
+    profile_mode: str = Field(
+        default="relevant",
+        description="「关于对方」画像注入模式：relevant=只在问到旧事/关系线索时，always=每轮常驻，off=关闭",
+    )
     profile_items: int = Field(default=6, description="「关于对方」画像最多几条")
     profile_chars: int = Field(default=300, description="画像块字数上限")
 
@@ -145,7 +150,7 @@ class MemorySectionConfig(PluginConfigBase):
     )
     subject_hint: str = Field(
         default="",
-        description="抽取提示词里的人物提示，形如「（许杏玖 / 季怡）」",
+        description="抽取提示词里的人物提示，形如「（BotName / Alice）」",
     )
     require_person_subject: bool = Field(
         default=True,
@@ -621,8 +626,8 @@ class MemFadePlugin(MaiBotPlugin):
         **群公告的原文**当成了用户的话记下来：
 
         * 主人引用机器人的「你昨晚一口气刷完Re」，于是记忆库里多了一条
-          「许杏玖昨晚一口气刷完了Re」——机器人认领了主人说的话；
-        * 主人转发蓝桥杯群公告求总结，于是「季怡在备赛第18届蓝桥杯」
+          「BotName昨晚一口气刷完了Re」——机器人认领了主人说的话；
+        * 主人转发ProgrammingContest群公告求总结，于是「Alice在备赛第18届ProgrammingContest」
           被记了下来——可主人当时明确说过「我没跟你说过我要报名」。
 
         所以抽取前先把这两块剥掉：**引用与转发不是用户的话。**
@@ -658,7 +663,7 @@ class MemFadePlugin(MaiBotPlugin):
         所以：**不删，改成一行标注清楚的上下文**，
         提示词里写死「机器人：的行只用来判断指代，不要从中提取事实」。
         实测（宿主真实 LLM）：
-        - 有上下文 → 抽出「季怡已经购买《影之刃零》」（对）；
+        - 有上下文 → 抽出「Alice已经购买《影之刃零》」（对）；
         - 没上下文 → 这条直接不抽（宁可少记，也不要记含糊的）。
         """
 
@@ -838,19 +843,23 @@ class MemFadePlugin(MaiBotPlugin):
             vector = None
             if self.config.memory.use_host_embedding:
                 vector = await engine.embed_query(query)
-            profile = engine.retriever.profile(
-                scope.key(),
-                max_items=max(0, int(self.config.memory.profile_items)),
-                max_chars=max(0, int(self.config.memory.profile_chars)),
+            profile = (
+                engine.retriever.profile(
+                    scope.key(),
+                    max_items=max(0, int(self.config.memory.profile_items)),
+                    max_chars=max(0, int(self.config.memory.profile_chars)),
+                )
+                if self._should_inject_profile(query)
+                else None
             )
             context = engine.build_context(
                 query,
                 scope,
                 query_vector=vector,
                 header=self.config.memory.inject_header or "记忆",
-                exclude_ids=profile.ids,
+                exclude_ids=profile.ids if profile is not None else (),
             )
-            body = self._wrap_context(context.text, profile.text)
+            body = self._wrap_context(context.text, profile.text if profile is not None else "")
             if not body:
                 return None
             modified = dict(kwargs)
@@ -895,15 +904,21 @@ class MemFadePlugin(MaiBotPlugin):
             return None
         session_id = str(kwargs.get("session_id") or "")
         query = self._last_user_text(items)
+        if not query:
+            return None
         scope = Scope(platform="qq", chat_type="session", chat_id=str(session_id or "unknown"))
         try:
             vector = None
             if self.config.memory.use_host_embedding:
                 vector = await engine.embed_query(query)
-            profile = engine.retriever.profile(
-                scope.key(),
-                max_items=max(0, int(self.config.memory.profile_items)),
-                max_chars=max(0, int(self.config.memory.profile_chars)),
+            profile = (
+                engine.retriever.profile(
+                    scope.key(),
+                    max_items=max(0, int(self.config.memory.profile_items)),
+                    max_chars=max(0, int(self.config.memory.profile_chars)),
+                )
+                if self._should_inject_profile(query)
+                else None
             )
             context = engine.build_context(
                 query,
@@ -911,12 +926,12 @@ class MemFadePlugin(MaiBotPlugin):
                 query_vector=vector,
                 header=self.config.memory.inject_header or "记忆",
                 # 画像里已经写过的，别在记忆块里再写一遍
-                exclude_ids=profile.ids,
+                exclude_ids=profile.ids if profile is not None else (),
                 # 强化只做一次（build_context 内部也会强化，靠冷却期兜着，
                 # 但「读上下文也是写」这件事得在一个地方说清楚）
                 reinforce=False,
             )
-            body = self._wrap_context(context.text, profile.text)
+            body = self._wrap_context(context.text, profile.text if profile is not None else "")
             if not body:
                 return None
             new_items = list(items)
@@ -943,7 +958,13 @@ class MemFadePlugin(MaiBotPlugin):
 
     @staticmethod
     def _last_user_text(items: list) -> str:
-        """从 Context Items 里取最后一条用户消息的纯文本。"""
+        """从 Context Items 里取最后一条真实聊天消息。
+
+        Planner 请求末尾还会混入“时间：…”“你需要输出对BotName发言的分析”
+        这类 UserMessageItem。它们不是聊天内容，拿去做向量检索会稳定召回到
+        一组与当前话题无关的旧记忆。因此只认 ``<message>`` 和主动任务块，
+        其余宿主注入文本一律跳过。
+        """
 
         for item in reversed(items):
             if not isinstance(item, dict) or item.get("item_type") != "UserMessageItem":
@@ -958,8 +979,75 @@ class MemFadePlugin(MaiBotPlugin):
                     if isinstance(text, str) and text.strip():
                         chunks.append(text.strip())
             if chunks:
-                return "\n".join(chunks)
+                query = MemFadePlugin._extract_memory_query("\n".join(chunks))
+                if query:
+                    return query
         return ""
+
+    @staticmethod
+    def _extract_memory_query(text: str) -> str:
+        """从一条 Context Item 文本中提取真正可检索的聊天内容。"""
+
+        normalized = (text or "").strip()
+        if not normalized:
+            return ""
+
+        # 宿主序列化聊天项时通常只写开标签（没有 </message>），这里两种都兼容。
+        message_opens = list(re.finditer(r"<message\b[^>]*>", normalized, flags=re.IGNORECASE))
+        if message_opens:
+            body = normalized[message_opens[-1].end() :]
+            closing_index = body.rfind("</message>")
+            if closing_index >= 0:
+                body = body[:closing_index]
+            return body.strip()
+
+        proactive_matches = list(
+            re.finditer(
+                r"<plugin_proactive_task\b[^>]*>(.*?)</plugin_proactive_task>",
+                normalized,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+        )
+        if proactive_matches:
+            lines = []
+            for line in proactive_matches[-1].group(1).splitlines():
+                stripped = line.strip()
+                if stripped.startswith(("插件请求你主动处理一轮聊天：", "触发原因：", "附加信息：")):
+                    lines.append(stripped)
+            return "\n".join(lines)
+
+        # 单元测试和部分兼容调用会直接放裸文本；生产里的宿主控制消息则跳过。
+        ignored_prefixes = (
+            "[系统",
+            "[上下文恢复]",
+            "[事件-",
+            "<system-reminder",
+            "<subagent_result",
+            "时间：",
+            "你需要输出",
+            "这是启动时恢复的历史上下文提醒",
+        )
+        if normalized.startswith(ignored_prefixes):
+            return ""
+        return normalized
+
+    def _should_inject_profile(self, query: str) -> bool:
+        """画像只在问题明显涉及旧事、关系或称呼时注入。"""
+
+        mode = str(self.config.memory.profile_mode or "relevant").strip().lower()
+        if mode == "off":
+            return False
+        if mode == "always":
+            return True
+        if len(query.strip()) < 2:
+            return False
+        return bool(
+            re.search(
+                r"记得|还记得|以前|之前|上次|那次|曾经|说过|提过|约定|答应|"
+                r"欠我|欠你|生日|叫我|称呼|关于我|对我的印象|了解我",
+                query,
+            )
+        )
 
     @staticmethod
     def _insert_index(items: list) -> int:
@@ -1435,9 +1523,9 @@ class MemFadePlugin(MaiBotPlugin):
         visibility="visible",
         parameters={
             "content": {"type": "string", "description": "要记住的内容，一句话，30 字以内", "required": True},
-            "subject": {"type": "string", "description": "谁（例：许杏玖）"},
+            "subject": {"type": "string", "description": "谁（例：BotName）"},
             "predicate": {"type": "string", "description": "怎么样（例：住在 / 喜欢 / 参加）"},
-            "object": {"type": "string", "description": "什么（例：上海 / 辣的食物 / 第18届蓝桥杯）"},
+            "object": {"type": "string", "description": "什么（例：上海 / 辣的食物 / 第18届ProgrammingContest）"},
             "kind": {
                 "type": "string",
                 "description": "类型：semantic 事实 / preference 喜好 / episodic 事件 / relation 关系",
@@ -1744,8 +1832,8 @@ class MemFadePlugin(MaiBotPlugin):
         if engine is None:
             return {"ok": False, "error": "引擎未就绪"}
         sample = conversation or (
-            "用户：我叫许杏玖，以后叫我小许就行\n"
-            "机器人：好的，许杏玖，记住了\n"
+            "用户：我叫BotName，以后叫我小许就行\n"
+            "机器人：好的，BotName，记住了\n"
             "用户：我最喜欢吃辣的东西，不吃香菜\n"
             "机器人：记住了"
         )
@@ -1759,7 +1847,7 @@ class MemFadePlugin(MaiBotPlugin):
             elif line.startswith("机器人："):
                 messages.append({"role": "assistant", "content": line[4:].strip(), "speaker": "机器人"})
             elif "：" in line:
-                # 「季怡：xxx」这种带名字的写法也算——
+                # 「Alice：xxx」这种带名字的写法也算——
                 # 有名字才测得出「主语纪律」那几道闸门。
                 speaker, _, content = line.partition("：")
                 messages.append(

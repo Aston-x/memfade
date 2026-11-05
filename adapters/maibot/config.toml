@@ -9,6 +9,8 @@ inject_header = "记忆"
 max_inject_tokens = 600
 top_k = 8
 echo_max = 3
+# relevant=只在问到旧事/关系线索时注入；always=每轮常驻；off=关闭
+profile_mode = "relevant"
 profile_items = 6
 profile_chars = 300
 extract_enabled = true
@@ -24,7 +26,7 @@ store_evidence = true
 self_names = []
 # 只记这些主语的事（留空=不限制；群聊里认识很多人时用）
 focus_subjects = []
-# 抽取提示词里的人物提示，形如「（许杏玖 / 季怡）」
+# 抽取提示词里的人物提示，形如「（BotName / Alice）」
 subject_hint = ""
 # 主语必须是人（对话里出现过的名字或常见身份称呼），公共知识不入库
 require_person_subject = true

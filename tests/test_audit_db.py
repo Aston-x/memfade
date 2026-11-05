@@ -40,7 +40,7 @@ class TestGateRescan(unittest.TestCase):
         self.engine, self.path, _ = temp_engine()
         self.audit = _load_audit()
 
-    def _scan(self, focus=("季怡",), self_names=("许杏玖",)):
+    def _scan(self, focus=("Alice",), self_names=("BotName",)):
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
         try:
@@ -76,8 +76,8 @@ class TestGateRescan(unittest.TestCase):
     def test_legit_memory_passes(self):
         """正常记忆不许被误伤。"""
 
-        self._remember("季怡喜欢辣的食物", "季怡")
-        self._remember("季怡今天只有一节课", "季怡", kind=MemoryKind.EPISODIC)
+        self._remember("Alice喜欢辣的食物", "Alice")
+        self._remember("Alice今天只有一节课", "Alice", kind=MemoryKind.EPISODIC)
         should_not_exist, should_downgrade = self._scan()
         self.assertEqual(should_not_exist, [])
         self.assertEqual(should_downgrade, [])
@@ -86,8 +86,8 @@ class TestGateRescan(unittest.TestCase):
         """「今天」被写成了「每天」，且原话里没有这个频率 → 该降级为事件。"""
 
         self._remember(
-            "季怡每天只有一节课",
-            "季怡",
+            "Alice每天只有一节课",
+            "Alice",
             quote="不忙，整天就一节课",
             quote_score=0.8,
         )
@@ -107,7 +107,7 @@ class TestGateRescan(unittest.TestCase):
         """没配 focus 时，不该替部署方决定「只记谁」。"""
 
         self._remember("群里把deepseek驱动的角色叫大肥鱼", "大肥鱼")
-        should_not_exist, _ = self._scan(focus=(), self_names=("许杏玖",))
+        should_not_exist, _ = self._scan(focus=(), self_names=("BotName",))
         self.assertEqual(should_not_exist, [])
 
 

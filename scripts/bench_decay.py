@@ -75,16 +75,16 @@ def build_script(turns: int, days: float) -> List[Turn]:
         facts: List[Dict[str, Any]] = []
         user = ""
         if index == 0:
-            user = "我叫许杏玖，记住"
-            facts.append({"content": "许杏玖的名字是许杏玖", "kind": MemoryKind.SEMANTIC, "importance": 0.9})
+            user = "我叫BotName，记住"
+            facts.append({"content": "BotName的名字是BotName", "kind": MemoryKind.SEMANTIC, "importance": 0.9})
         elif index == turns // 4:
             user = "我住在杭州"
             facts.append(
                 {
-                    "content": "许杏玖住在杭州",
+                    "content": "BotName住在杭州",
                     "kind": MemoryKind.SEMANTIC,
                     "importance": 0.85,
-                    "subject": "许杏玖",
+                    "subject": "BotName",
                     "predicate": "住在",
                     "object": "杭州",
                 }
@@ -93,10 +93,10 @@ def build_script(turns: int, days: float) -> List[Turn]:
             user = "我最喜欢吃辣"
             facts.append(
                 {
-                    "content": "许杏玖喜欢吃辣",
+                    "content": "BotName喜欢吃辣",
                     "kind": MemoryKind.PREFERENCE,
                     "importance": 0.8,
-                    "subject": "许杏玖",
+                    "subject": "BotName",
                     "predicate": "口味",
                     "object": "吃辣",
                 }
@@ -105,7 +105,7 @@ def build_script(turns: int, days: float) -> List[Turn]:
             user = "上次我们一起去吃了炸鸡"
             facts.append(
                 {
-                    "content": "许杏玖和季怡一起去吃了炸鸡",
+                    "content": "BotName和Alice一起去吃了炸鸡",
                     "kind": MemoryKind.EPISODIC,
                     "importance": 0.35,
                 }
@@ -114,10 +114,10 @@ def build_script(turns: int, days: float) -> List[Turn]:
             user = "我搬家了，现在住在上海"
             facts.append(
                 {
-                    "content": "许杏玖住在上海",
+                    "content": "BotName住在上海",
                     "kind": MemoryKind.SEMANTIC,
                     "importance": 0.85,
-                    "subject": "许杏玖",
+                    "subject": "BotName",
                     "predicate": "住在",
                     "object": "上海",
                 }
@@ -126,10 +126,10 @@ def build_script(turns: int, days: float) -> List[Turn]:
             user = "我不吃辣了，改口味了"
             facts.append(
                 {
-                    "content": "许杏玖现在不吃辣",
+                    "content": "BotName现在不吃辣",
                     "kind": MemoryKind.PREFERENCE,
                     "importance": 0.8,
-                    "subject": "许杏玖",
+                    "subject": "BotName",
                     "predicate": "口味",
                     "object": "不吃辣",
                 }
@@ -178,7 +178,7 @@ _EPISODE_EVENTS = [
 CURRENT_FACTS = {
     "住址": "上海",
     "口味": "不吃辣",
-    "名字": "许杏玖",
+    "名字": "BotName",
 }
 
 

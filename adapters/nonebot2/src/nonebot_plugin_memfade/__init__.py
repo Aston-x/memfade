@@ -11,7 +11,7 @@ NoneBot2 没有统一的「往 LLM prompt 里插东西」的钩子——
       from nonebot_plugin_memfade import build_context, remember, engine
 
       text = await build_context(event)      # 拿到可直接注入 prompt 的记忆文本
-      await remember(event, "他叫许杏玖")      # 显式写入一条记忆
+      await remember(event, "他叫BotName")      # 显式写入一条记忆
 
 另外也会把记忆文本挂到 ``event.set_extra("memfade_context", ...)``，
 想自动接管的插件直接读这个 extra 即可。

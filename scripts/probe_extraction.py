@@ -8,9 +8,9 @@
 
 用法：
 
-    python scripts/probe_extraction.py --host-root "G:/AI/许杏玖-MaiBot/MaiBot" \
-        --plugin-config "G:/AI/许杏玖-MaiBot/MaiBot/plugins/memfade-plugin/config.toml" \
-        --conversation "季怡：我在想怎么在小红书上卖AI头像赚钱养你呢"
+    python scripts/probe_extraction.py --host-root "G:/AI/BotName-MaiBot/MaiBot" \
+        --plugin-config "G:/AI/BotName-MaiBot/MaiBot/plugins/memfade-plugin/config.toml" \
+        --conversation "Alice：我在想怎么在小红书上卖AI头像赚钱养你呢"
 
 对话可以写成多行，每行「说话人：内容」；
 说话人留空就用「用户」。**引号与转发要先剥掉**——

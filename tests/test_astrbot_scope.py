@@ -91,11 +91,11 @@ class TestReadScopes(unittest.TestCase):
 class TestWriteRouting(unittest.TestCase):
     """按主语决定写进哪一层。"""
 
-    MEMBERS = {"季怡": "u1", "阿明": "u2"}
+    MEMBERS = {"Alice": "u1", "Bob": "u2"}
 
     def test_known_member_goes_to_person_layer(self):
         scope = resolve_write_scope(
-            "季怡", group_id="1001", sender_id="u2", members=self.MEMBERS
+            "Alice", group_id="1001", sender_id="u2", members=self.MEMBERS
         )
         self.assertIsNotNone(scope)
         self.assertEqual(scope.chat_type, CHAT_GROUP_USER)
@@ -181,10 +181,10 @@ class TestIsolationProof(unittest.IsolatedAsyncioTestCase):
 
         self.engine.remember(
             MemoryDraft(
-                content="季怡喜欢吃辣的食物",
+                content="Alice喜欢吃辣的食物",
                 kind=MemoryKind.PREFERENCE,
                 importance=0.9,
-                subject="季怡",
+                subject="Alice",
             ),
             a_scope,
         )
@@ -224,10 +224,10 @@ class TestIsolationProof(unittest.IsolatedAsyncioTestCase):
 
         self.engine.remember(
             MemoryDraft(
-                content="季怡的银行卡密码是六位数",
+                content="Alice的银行卡密码是六位数",
                 kind=MemoryKind.SEMANTIC,
                 importance=0.95,
-                subject="季怡",
+                subject="Alice",
             ),
             private_scope("u1"),
         )

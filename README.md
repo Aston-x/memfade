@@ -6,7 +6,7 @@
 > memfade 还管「这件事**还该不该被想起来**」。
 
 ```
-核心 5308 行 · 零第三方依赖 · 单文件 SQLite · 309 项测试
+核心 5441 行 · 零第三方依赖 · 单文件 SQLite · 309 项测试
 适配器自研 4921 行 · 覆盖 MaiBot / LangBot / AstrBot / NoneBot2 / Koishi + HTTP 侧车
 ```
 
@@ -79,7 +79,7 @@ effective_strength(now) = strength x exp(-Δdays / stability)
 
 ### 4. 失败即闭的会话隔离
 
-每条记忆带一个作用域键（`qq:group:1127155154` / `qq:private:1738157278`）。
+每条记忆带一个作用域键（`qq:group:3000000003` / `qq:private:1000000001`）。
 检索时只有一条过滤条件：
 
 ```sql
@@ -95,8 +95,8 @@ scope_key = 当前会话  OR  cross_scope = 1
 
 ```
 [记忆]
-- 许杏玖喜欢辣的食物
-- 许杏玖住在上海
+- BotName喜欢辣的食物
+- BotName住在上海
 
 [记忆·旧事]
 - （可能已经变了，仅供参考）上周三一起去吃了炸鸡
@@ -112,7 +112,7 @@ scope_key = 当前会话  OR  cross_scope = 1
 
 ```
 [系统·关于对方]
-- 许杏玖喜欢辣的食物
+- BotName喜欢辣的食物
 - 他讨厌别人迟到
 ```
 
@@ -157,7 +157,7 @@ BM25 的长度归一化会被带偏——「重要的长约定」会被「炸鸡
 
 | 用户说 | 注入 |
 |---|---|
-| 蓝桥杯什么时候截止报名 | 6 条，全是报名截止 / 赛制 / 缴费 |
+| ProgrammingContest什么时候截止报名 | 6 条，全是报名截止 / 赛制 / 缴费 |
 | 影之刃零打到哪了 | 8 条，全是进度 |
 | 今天有点累 | **0 条** |
 | 晚安 | **0 条** |
@@ -173,7 +173,7 @@ BM25 的长度归一化会被带偏——「重要的长约定」会被「炸鸡
 
 1. **把这一次说成常态**——「今天只有一节课」被记成「每天只有一节课」；
 2. **把当次的请求说成长期偏好**——「这次你用平时跟别人说话的语气」
-   被记成「希望小玖用平时与别人说话的语气」。
+   被记成「希望Bot用平时与别人说话的语气」。
 
 这两类错法**数值门槛拦不住**：模型给它们打 0.6、0.75 分，很有自信。
 所以 memfade 把闸门写进代码，分两层：
@@ -203,7 +203,7 @@ BM25 的长度归一化会被带偏——「重要的长约定」会被「炸鸡
 所以工具路径也走同一道闸门（`check_remember_request`）：
 拦临时状态与临时情绪，拦「跟要记的那个人没关系」。
 判据是**内容里提不提到那个人**，不是「主语是不是那个人」——
-「许杏玖欠季怡半首歌」这种承诺主语是机器人，说的却是关于季怡的事，该记。
+「BotName欠Alice半首歌」这种承诺主语是机器人，说的却是关于Alice的事，该记。
 
 主人点名要记的（`/记住`）只拦临时状态与情绪，**不拦主语范围**——
 那是主人自己的判断，不该由插件替他做主。
@@ -279,7 +279,7 @@ BM25 的长度归一化会被带偏——「重要的长约定」会被「炸鸡
    指出哪些「按现在的规则不该入库」、哪些「该降级为事件」：
 
    ```bash
-   python scripts/audit_db.py --db memfade.db --focus 季怡 --self-name 许杏玖
+   python scripts/audit_db.py --db memfade.db --focus Alice --self-name BotName
    ```
 
    **清理的标准动作就是这一步**，不是凭记忆挑那几条。
@@ -292,7 +292,7 @@ BM25 的长度归一化会被带偏——「重要的长约定」会被「炸鸡
 self_names = []
 # 只记这些主语的事（留空=不限制；群聊里认识很多人时用）
 focus_subjects = []
-# 抽取提示词里的人物提示，形如「（许杏玖 / 季怡）」
+# 抽取提示词里的人物提示，形如「（BotName / Alice）」
 subject_hint = ""
 # 主语必须是人（对话里出现过的名字或常见身份称呼），公共知识不入库
 require_person_subject = true
@@ -309,7 +309,7 @@ python scripts/clean_library.py --db <memfade.db> --dry-run
 python scripts/clean_library.py --db <memfade.db> --apply
 # 用宿主真实 LLM 探一遍「这段对话会被记成什么」
 python scripts/probe_extraction.py --host-root <MaiBot根目录> \
-    --conversation "季怡：我在想怎么在小红书上卖AI头像赚钱养你呢"
+    --conversation "Alice：我在想怎么在小红书上卖AI头像赚钱养你呢"
 ```
 
 
@@ -353,13 +353,13 @@ adapters/
 抽取用的大模型与向量模型直接复用宿主已经在 MaiBot 里配好的那些。
 
 ```bash
-python scripts/build_plugin.py --dest G:/AI/许杏玖-MaiBot/MaiBot/plugins
+python scripts/build_plugin.py --dest G:/AI/BotName-MaiBot/MaiBot/plugins
 ```
 
 也可以让脚本自己推路径（**推荐**——不用记宿主把插件放哪）：
 
 ```bash
-python scripts/build_plugin.py --host maibot --host-root "G:/AI/许杏玖-MaiBot/MaiBot"
+python scripts/build_plugin.py --host maibot --host-root "G:/AI/BotName-MaiBot/MaiBot"
 ```
 
 命令：
@@ -378,7 +378,7 @@ python scripts/build_plugin.py --host maibot --host-root "G:/AI/许杏玖-MaiBot
 
 | 适配器 | 验证方式 | 覆盖 |
 |---|---|---|
-| MaiBot | **实机部署在许杏玖上**，并用宿主自己的反序列化器验证注入的 item | 全链路实机 |
+| MaiBot | **实机部署在BotName上**，并用宿主自己的反序列化器验证注入的 item | 全链路实机 |
 | LangBot | 装了真的 `langbot-plugin` SDK，9 项测试跑在真 SDK 上（找不到就退到本地研究目录里的 SDK 副本），含**组件清单的真 SDK 发现** | API、注入行为、组件发现、指令 |
 | AstrBot | 装了真的 AstrBot SDK 源码，用 ast 静态核对 API 面 + 桩件测逻辑 | API 面、作用域逻辑、指令 |
 | Koishi | 装了真的 koishi@4.18，`tsc` 类型检查 + 6 项行为测试（会起真的 Python 侧车） | 类型、跨语言契约、指令 |
@@ -405,7 +405,7 @@ npm --prefix adapters/koishi test     # Koishi 类型检查 + 行为测试
 
 ```powershell
 # MaiBot 的 venv（带 maibot_sdk）
-& 'G:\AI\许杏玖-MaiBot\MaiBot\.venv\Scripts\python.exe' -m unittest discover -s tests -t .
+& 'G:\AI\BotName-MaiBot\MaiBot\.venv\Scripts\python.exe' -m unittest discover -s tests -t .
 # 系统 Python（带 langbot-plugin / nonebot2）
 python -m unittest discover -s tests -t .
 ```
@@ -416,10 +416,10 @@ python -m unittest discover -s tests -t .
 from memfade import MemoryEngine, MemoryDraft, MemoryKind, Scope
 
 engine = MemoryEngine(db_path="memfade.db")
-scope = Scope(platform="qq", chat_type="private", chat_id="1738157278")
+scope = Scope(platform="qq", chat_type="private", chat_id="1000000001")
 
 engine.remember(
-    MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.8),
+    MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.8),
     scope,
 )
 
@@ -444,7 +444,7 @@ python scripts/memfade_cli.py --db memfade.db fade                # 跑一轮整
 
 ```bash
 python scripts/audit_db.py --db memfade.db
-python scripts/audit_db.py --db memfade.db --focus 季怡 --self-name 许杏玖
+python scripts/audit_db.py --db memfade.db --focus Alice --self-name BotName
 ```
 
 清理已经脏了的库（按规则出计划，`--apply` 前自动备份）：
@@ -478,7 +478,7 @@ python adapters/http/server.py --db memfade.db --port 8787 \
 python scripts/import_a_memorix.py \
     --source "<旧库>/metadata.db" \
     --target "<memfade>/memfade.db" \
-    --maibot-account 2760135586 --maibot-user 1738157278 \
+    --maibot-account 2000000002 --maibot-user 1000000001 \
     --host-root "<MaiBot 根目录>"
 ```
 
@@ -560,7 +560,7 @@ memfade 逐条给了答案：
 ③ 跨会话泄漏 : 0 条
 ```
 
-**实机（许杏玖线上）**：
+**实机（BotName线上）**：
 
 * 提示词快照里能直接找到 memfade 构造的 item——真实发给模型的上下文里
   确实带着记忆块（群会话 6/8、私聊 3/5 的快照命中，其余是检索没命中的预期情况）；

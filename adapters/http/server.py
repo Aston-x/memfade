@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hmac
 import json
 import os
 import sys
@@ -218,6 +219,11 @@ class MemFadeHTTPService:
         scope = _scope_from(payload)
         memory_id = payload.get("id")
         if memory_id:
+            target = self.engine.store.get(int(memory_id))
+            if not target:
+                return {"ok": False, "error": "not found"}
+            if target.scope_key != scope.key():
+                return {"ok": False, "error": "forbidden: scope mismatch"}
             ok = self.engine.forget(int(memory_id))
             return {"ok": bool(ok), "forgotten": int(memory_id) if ok else None}
         content = str(payload.get("content") or "").strip()
@@ -237,6 +243,11 @@ class MemFadeHTTPService:
         memory_id = payload.get("id")
         pinned = bool(payload.get("pinned", True))
         if memory_id:
+            target = self.engine.store.get(int(memory_id))
+            if not target:
+                return {"ok": False, "error": "not found"}
+            if target.scope_key != scope.key():
+                return {"ok": False, "error": "forbidden: scope mismatch"}
             ok = self.engine.pin(int(memory_id), pinned=pinned)
             return {"ok": bool(ok), "id": int(memory_id), "pinned": pinned}
         content = str(payload.get("content") or "").strip()
@@ -346,7 +357,8 @@ class MemFadeHandler(BaseHTTPRequestHandler):
     def _authorized(self) -> bool:
         if not self.token:
             return True
-        return self.headers.get("X-MemFade-Token", "") == self.token
+        token = self.headers.get("X-MemFade-Token", "")
+        return hmac.compare_digest(token.encode(), self.token.encode())
 
     def _send(self, status: int, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -356,11 +368,15 @@ class MemFadeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    _MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MB
+
     def _read_json(self) -> Dict[str, Any]:
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0:
             return {}
-        raw = self.rfile.read(length)
+        if length > self._MAX_BODY_BYTES:
+            return {}
+        raw = self.rfile.read(min(length, self._MAX_BODY_BYTES))
         try:
             data = json.loads(raw.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):

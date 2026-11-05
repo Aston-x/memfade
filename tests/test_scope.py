@@ -15,8 +15,8 @@ from memfade.types import MemoryDraft, MemoryKind, Scope
 from tests.helpers import temp_engine
 
 
-GROUP = Scope(platform="qq", chat_type="group", chat_id="1127155154")
-PRIVATE = Scope(platform="qq", chat_type="private", chat_id="1738157278")
+GROUP = Scope(platform="qq", chat_type="group", chat_id="3000000003")
+PRIVATE = Scope(platform="qq", chat_type="private", chat_id="1000000001")
 
 
 class TestScopeIsolation(unittest.TestCase):
@@ -76,6 +76,6 @@ class TestScopeIsolation(unittest.TestCase):
         self.assertEqual(self.engine.store.count(PRIVATE.key()), 1)
 
     def test_scope_key_format(self):
-        self.assertEqual(GROUP.key(), "qq:group:1127155154")
+        self.assertEqual(GROUP.key(), "qq:group:3000000003")
         self.assertEqual(Scope.from_key("qq:private:123").chat_id, "123")
 

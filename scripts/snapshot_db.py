@@ -12,7 +12,7 @@
 用法：
 
     python scripts/snapshot_db.py \
-        --db "G:/AI/许杏玖-MaiBot/MaiBot/data/plugins/memfade.memory/memfade.db"
+        --db "G:/AI/BotName-MaiBot/MaiBot/data/plugins/memfade.memory/memfade.db"
     # → 打印副本路径：/tmp/memfade-snapshot-20261102-120000.db
 
 然后拿副本路径去跑你的诊断脚本。

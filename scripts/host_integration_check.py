@@ -21,7 +21,7 @@
 
 用法（要在 MaiBot 的 venv 里跑）：
 
-    & 'G:\AI\许杏玖-MaiBot\MaiBot\.venv\Scripts\python.exe' `
+    & 'G:\AI\BotName-MaiBot\MaiBot\.venv\Scripts\python.exe' `
         scripts\host_integration_check.py
 """
 
@@ -31,7 +31,7 @@ import asyncio
 import sys
 from datetime import datetime
 
-MAIBOT_ROOT = r"G:\AI\许杏玖-MaiBot\MaiBot"
+MAIBOT_ROOT = r"G:\AI\BotName-MaiBot\MaiBot"
 if MAIBOT_ROOT not in sys.path:
     sys.path.insert(0, MAIBOT_ROOT)
 

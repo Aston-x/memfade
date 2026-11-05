@@ -34,10 +34,10 @@ class TestPortability(unittest.TestCase):
             scope = Scope(platform="qq", chat_type="session", chat_id="s1")
             source.remember(
                 MemoryDraft(
-                    content="季怡喜欢辣的食物",
+                    content="Alice喜欢辣的食物",
                     kind=MemoryKind.PREFERENCE,
                     importance=0.8,
-                    subject="季怡",
+                    subject="Alice",
                     predicate="喜欢",
                     object="辣的食物",
                 ),
@@ -51,9 +51,9 @@ class TestPortability(unittest.TestCase):
                 written = target.import_memories(exported, scope)
                 self.assertEqual(len(written), 1)
                 memory = written[0]
-                self.assertEqual(memory.content, "季怡喜欢辣的食物")
+                self.assertEqual(memory.content, "Alice喜欢辣的食物")
                 self.assertEqual(memory.kind, MemoryKind.PREFERENCE)
-                self.assertEqual(memory.subject, "季怡")
+                self.assertEqual(memory.subject, "Alice")
                 self.assertEqual(memory.object, "辣的食物")
                 self.assertAlmostEqual(memory.importance, 0.8, places=3)
                 hits = target.recall("辣的食物", scope, require_match=True)
@@ -73,7 +73,7 @@ class TestPortability(unittest.TestCase):
                 content="一条正在淡出的记忆",
                 kind=MemoryKind.EPISODIC,
                 importance=0.5,
-                subject="季怡",
+                subject="Alice",
                 predicate="做了",
                 object="某件事",
             )
@@ -105,7 +105,7 @@ class TestPortability(unittest.TestCase):
                 content="同一条记忆",
                 kind=MemoryKind.SEMANTIC,
                 importance=0.7,
-                subject="季怡",
+                subject="Alice",
                 predicate="喜欢",
                 object="辣",
             )

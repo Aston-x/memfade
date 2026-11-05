@@ -15,7 +15,7 @@ SCOPE = Scope(platform="qq", chat_type="group", chat_id="1")
 DAY = 86400.0
 
 
-class TestRetrieval(unittest.TestCase):
+class TestRetrieval(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.engine, self.path, self.config = temp_engine()
 
@@ -35,13 +35,13 @@ class TestRetrieval(unittest.TestCase):
     def test_single_char_query_finds_memory(self):
         """单字查询也要能查到东西。
 
-        全文索引里存的是二元组，「许杏玖喜欢辣的食物」的二元组是
+        全文索引里存的是二元组，「BotName喜欢辣的食物」的二元组是
         「喜欢」「欢辣」「辣的」……没有孤零零的「辣」。
         所以只查二元组的话，搜索框里打一个「辣」就什么都搜不到——
         而打单字恰恰是搜索框最常见的用法。
         """
 
-        draft = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8)
+        draft = MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8)
         self.engine.remember(draft, SCOPE)
         hits = self.engine.recall("辣", SCOPE)
         self.assertEqual(len(hits), 1, "单字查询应能命中")
@@ -67,7 +67,7 @@ class TestRetrieval(unittest.TestCase):
             self.engine.remember(
                 MemoryDraft(content="这是第%d条关于日常琐事的记录" % i, importance=0.5), SCOPE
             )
-        self.engine.remember(MemoryDraft(content="许杏玖喜欢辣的食物", importance=0.8), SCOPE)
+        self.engine.remember(MemoryDraft(content="BotName喜欢辣的食物", importance=0.8), SCOPE)
         hits = self.engine.recall("的", SCOPE)
         self.assertLessEqual(len(hits), 3, "高频单字不该把整库拖进来")
 
@@ -82,8 +82,8 @@ class TestRetrieval(unittest.TestCase):
     def test_single_char_hits_are_discriminated(self):
         """只对上一个字的记忆，相关度应当低于两个字都对上的。"""
 
-        both = MemoryDraft(content="许杏玖喜欢辣的食物", importance=0.5)
-        one = MemoryDraft(content="许杏玖讨厌香菜", importance=0.5)
+        both = MemoryDraft(content="BotName喜欢辣的食物", importance=0.5)
+        one = MemoryDraft(content="BotName讨厌香菜", importance=0.5)
         self.engine.remember(both, SCOPE)
         self.engine.remember(one, SCOPE)
         hits = self.engine.recall("辣", SCOPE, require_match=True)
@@ -93,23 +93,23 @@ class TestRetrieval(unittest.TestCase):
     def test_rendered_fact_does_not_duplicate_subject(self):
         """原文已经有主语了，别再拼一遍。
 
-        「第18届蓝桥杯」+「统一口径」+「官方口径」拼出来是
-        「第18届蓝桥杯统一口径官方口径」——原文明明就是「第18届蓝桥杯官方口径」。
+        「第18届ProgrammingContest」+「统一口径」+「官方口径」拼出来是
+        「第18届ProgrammingContest统一口径官方口径」——原文明明就是「第18届ProgrammingContest官方口径」。
         """
 
         draft = MemoryDraft(
-            content="第18届蓝桥杯官方口径",
+            content="第18届ProgrammingContest官方口径",
             kind=MemoryKind.SEMANTIC,
             importance=0.8,
         )
         self.engine.remember(draft, SCOPE)
         mem = self.engine.store.iter_scope(SCOPE.key())[0]
-        mem.subject = "第18届蓝桥杯"
+        mem.subject = "第18届ProgrammingContest"
         mem.predicate = "统一口径"
         mem.object = "官方口径"
         self.engine.store.update(mem, fts_text(mem.content))
-        context = self.engine.build_context("蓝桥杯", SCOPE)
-        self.assertIn("第18届蓝桥杯官方口径", context.text)
+        context = self.engine.build_context("ProgrammingContest", SCOPE)
+        self.assertIn("第18届ProgrammingContest官方口径", context.text)
         self.assertNotIn("统一口径官方口径", context.text)
 
     def test_rendered_fact_adds_missing_subject(self):
@@ -118,12 +118,12 @@ class TestRetrieval(unittest.TestCase):
         draft = MemoryDraft(content="辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8)
         self.engine.remember(draft, SCOPE)
         mem = self.engine.store.iter_scope(SCOPE.key())[0]
-        mem.subject = "许杏玖"
+        mem.subject = "BotName"
         mem.predicate = "喜欢"
         mem.object = "辣的食物"
         self.engine.store.update(mem, fts_text(mem.content))
         context = self.engine.build_context("辣", SCOPE)
-        self.assertIn("许杏玖喜欢辣的食物", context.text)
+        self.assertIn("BotName喜欢辣的食物", context.text)
 
     def test_function_word_query_does_not_match_everything(self):
         """「在的」这种全虚词二元组不能拿去检索。
@@ -131,8 +131,8 @@ class TestRetrieval(unittest.TestCase):
         二元组索引里「在的」几乎每条都有，拿它当查询词等于跟整本语料库匹配。
         """
 
-        self.engine.remember(MemoryDraft(content="季怡现在的铁子与加价仲裁无关", importance=0.6), SCOPE)
-        self.engine.remember(MemoryDraft(content="蓝桥杯报名12月18日截止", importance=0.6), SCOPE)
+        self.engine.remember(MemoryDraft(content="Alice现在的铁子与加价仲裁无关", importance=0.6), SCOPE)
+        self.engine.remember(MemoryDraft(content="ProgrammingContest报名12月18日截止", importance=0.6), SCOPE)
         hits = self.engine.recall("不存在的词xyz", SCOPE, require_match=True)
         self.assertEqual(len(hits), 0, "无意义的查询不该命中任何记忆")
 
@@ -143,10 +143,10 @@ class TestRetrieval(unittest.TestCase):
         面板说的和机器人实际做的不一样，解释就没有意义了。
         """
 
-        self.engine.remember(MemoryDraft(content="第18届蓝桥杯官方口径", importance=0.8), SCOPE)
-        self.engine.remember(MemoryDraft(content="许杏玖喜欢辣的食物", importance=0.8), SCOPE)
-        hits = self.engine.recall("蓝桥杯", SCOPE)
-        rows = self.engine.explain("蓝桥杯", SCOPE)
+        self.engine.remember(MemoryDraft(content="第18届ProgrammingContest官方口径", importance=0.8), SCOPE)
+        self.engine.remember(MemoryDraft(content="BotName喜欢辣的食物", importance=0.8), SCOPE)
+        hits = self.engine.recall("ProgrammingContest", SCOPE)
+        rows = self.engine.explain("ProgrammingContest", SCOPE)
         self.assertEqual([row["id"] for row in rows], [hit.memory.id for hit in hits])
         for row, hit in zip(rows, hits):
             self.assertAlmostEqual(row["score"], hit.score, places=3)
@@ -162,7 +162,7 @@ class TestRetrieval(unittest.TestCase):
         「还记得炸鸡吗」会要求记忆同时含全部五个二元组——几乎查不到东西。
         """
 
-        draft = MemoryDraft(content="许杏玖和季怡一起去吃了炸鸡", kind=MemoryKind.EPISODIC, importance=0.5)
+        draft = MemoryDraft(content="BotName和Alice一起去吃了炸鸡", kind=MemoryKind.EPISODIC, importance=0.5)
         self.engine.remember(draft, SCOPE)
         hits = self.engine.recall("还记得炸鸡吗", SCOPE)
         self.assertEqual(len(hits), 1, "多词查询应能命中只含部分词的记忆")
@@ -211,14 +211,14 @@ class TestRetrieval(unittest.TestCase):
     def test_mmr_avoids_duplicate_topics(self):
         """一次注入里不该塞好几条讲同一件事的。"""
 
-        a = MemoryDraft(content="蓝桥杯报名截止到12月18号", kind=MemoryKind.SEMANTIC, importance=0.85)
-        b = MemoryDraft(content="蓝桥杯报名时间是10月8号开始", kind=MemoryKind.SEMANTIC, importance=0.85)
-        c = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8)
+        a = MemoryDraft(content="ProgrammingContest报名截止到12月18号", kind=MemoryKind.SEMANTIC, importance=0.85)
+        b = MemoryDraft(content="ProgrammingContest报名时间是10月8号开始", kind=MemoryKind.SEMANTIC, importance=0.85)
+        c = MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8)
         for draft in (a, b, c):
             self.engine.remember(draft, SCOPE)
         # 显式要宽松模式：第三条（不同话题）跟查询词面不搭，
         # 靠「最近写入」通道进来——这样才有第三条可供 MMR 交错。
-        context = self.engine.build_context("蓝桥杯报名", SCOPE, require_match=False)
+        context = self.engine.build_context("ProgrammingContest报名", SCOPE, require_match=False)
         contents = [hit.memory.content for hit in context.facts]
         self.assertEqual(len(contents), 3)
         # 前两条讲同一件事，应该被第三条（不同话题）插到中间或后面
@@ -229,18 +229,18 @@ class TestRetrieval(unittest.TestCase):
         """三元组相同 = 同一条事实，哪怕措辞不同。"""
 
         a = MemoryDraft(
-            content="季怡已经开始玩《影之刃零》",
+            content="Alice已经开始玩《影之刃零》",
             kind=MemoryKind.SEMANTIC,
             importance=0.7,
-            subject="季怡",
+            subject="Alice",
             predicate="玩",
             object="影之刃零",
         )
         b = MemoryDraft(
-            content="季怡已经在玩《影之刃零》",
+            content="Alice已经在玩《影之刃零》",
             kind=MemoryKind.SEMANTIC,
             importance=0.7,
-            subject="季怡",
+            subject="Alice",
             predicate="玩",
             object="影之刃零",
         )
@@ -264,13 +264,13 @@ class TestRetrieval(unittest.TestCase):
         self.assertEqual(hits[0].tier, "echo", "淡出档的记忆应进回声层")
 
     def test_context_separates_tiers(self):
-        fact = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
+        fact = MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
         self.engine.remember(fact, SCOPE)
         # 查询要**词面搭得上**：这条测的是「事实层与回声层怎么分层」，
         # 不是「能不能跨词面找到近义记忆」——后者要么有向量通道，
         # 要么显式要宽松模式（见 test_lenient_without_embeddings）。
         ctx = self.engine.build_context("辣的食物", SCOPE)
-        self.assertIn("许杏玖喜欢辣的食物", ctx.text)
+        self.assertIn("BotName喜欢辣的食物", ctx.text)
         self.assertIn("[记忆]", ctx.text)
 
     def test_echo_is_capped_and_marked(self):
@@ -296,7 +296,7 @@ class TestRetrieval(unittest.TestCase):
         self.assertLessEqual(ctx.token_estimate, 80, "注入内容应受预算约束")
 
     def test_reinforce_updates_strength(self):
-        draft = MemoryDraft(content="许杏玖喜欢吃火锅", kind=MemoryKind.SEMANTIC, importance=0.8)
+        draft = MemoryDraft(content="BotName喜欢吃火锅", kind=MemoryKind.SEMANTIC, importance=0.8)
         mem = self.engine.remember(draft, SCOPE)
         before = mem.recall_count
         self.engine.build_context("火锅", SCOPE)
@@ -305,7 +305,7 @@ class TestRetrieval(unittest.TestCase):
         self.assertIsNotNone(after.last_recalled_at)
 
     def test_reinforce_cooldown(self):
-        draft = MemoryDraft(content="许杏玖喜欢吃火锅", kind=MemoryKind.SEMANTIC, importance=0.8)
+        draft = MemoryDraft(content="BotName喜欢吃火锅", kind=MemoryKind.SEMANTIC, importance=0.8)
         mem = self.engine.remember(draft, SCOPE)
         self.engine.build_context("火锅", SCOPE)
         count = self.engine.store.get(mem.id).recall_count
@@ -322,7 +322,7 @@ class TestRetrieval(unittest.TestCase):
     async def test_archived_memory_revives_when_asked(self):
         """被明确问起时，已归档的记忆应该能被想起来。"""
 
-        draft = MemoryDraft(content="许杏玖喜欢吃炸鸡", kind=MemoryKind.EPISODIC, importance=0.5)
+        draft = MemoryDraft(content="BotName喜欢吃炸鸡", kind=MemoryKind.EPISODIC, importance=0.5)
         mem = self.engine.remember(draft, SCOPE)
         self.engine.forget(mem.id)
         self.assertEqual(self.engine.recall("炸鸡", SCOPE), [], "平时不该出现")
@@ -332,7 +332,7 @@ class TestRetrieval(unittest.TestCase):
         self.assertEqual(revived.status, MemoryStatus.ACTIVE)
 
     async def test_archived_memory_stays_hidden_when_not_asked(self):
-        draft = MemoryDraft(content="许杏玖喜欢吃炸鸡", kind=MemoryKind.EPISODIC, importance=0.5)
+        draft = MemoryDraft(content="BotName喜欢吃炸鸡", kind=MemoryKind.EPISODIC, importance=0.5)
         mem = self.engine.remember(draft, SCOPE)
         self.engine.forget(mem.id)
         hits = self.engine.recall("今天天气怎么样", SCOPE)
@@ -351,10 +351,10 @@ class TestRetrieval(unittest.TestCase):
         self.assertEqual(self.engine.store.count(SCOPE.key()), 1)
 
     def test_profile_lists_stable_facts(self):
-        fact = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
+        fact = MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
         self.engine.remember(fact, SCOPE)
         profile = self.engine.build_profile(SCOPE)
-        self.assertIn("许杏玖喜欢辣的食物", profile)
+        self.assertIn("BotName喜欢辣的食物", profile)
 
     def test_profile_excludes_episodic(self):
         event = MemoryDraft(content="上周三一起去吃了炸鸡", kind=MemoryKind.EPISODIC, importance=0.6)
@@ -364,13 +364,13 @@ class TestRetrieval(unittest.TestCase):
 
     def test_profile_is_scope_isolated(self):
         other = Scope(platform="qq", chat_type="session", chat_id="other")
-        fact = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
+        fact = MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
         self.engine.remember(fact, other)
         self.assertEqual(self.engine.build_profile(SCOPE), "", "别的会话的画像不该出现")
 
     def test_profile_respects_limits(self):
         for i in range(10):
-            draft = MemoryDraft(content=f"关于许杏玖的第{i}条稳定事实", kind=MemoryKind.SEMANTIC, importance=0.8)
+            draft = MemoryDraft(content=f"关于BotName的第{i}条稳定事实", kind=MemoryKind.SEMANTIC, importance=0.8)
             self.engine.remember(draft, SCOPE)
         profile = self.engine.build_profile(SCOPE, max_items=3)
         self.assertLessEqual(len(profile.splitlines()), 3)
@@ -378,7 +378,7 @@ class TestRetrieval(unittest.TestCase):
     def test_profile_prefers_stable_facts_over_transient(self):
         """画像是「这个人是谁」，不该被时效性事实挤占。"""
 
-        stable = MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
+        stable = MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.SEMANTIC, importance=0.9)
         transient = MemoryDraft(
             content="2026年11月1日这周更新里有《牧神记5》",
             kind=MemoryKind.SEMANTIC,
@@ -387,7 +387,7 @@ class TestRetrieval(unittest.TestCase):
         self.engine.remember(stable, SCOPE)
         self.engine.remember(transient, SCOPE)
         profile = self.engine.build_profile(SCOPE, max_items=1)
-        self.assertIn("许杏玖喜欢辣的食物", profile)
+        self.assertIn("BotName喜欢辣的食物", profile)
         self.assertNotIn("牧神记", profile)
 
     def test_profile_does_not_repeat_same_topic(self):
@@ -398,9 +398,9 @@ class TestRetrieval(unittest.TestCase):
         """
 
         for content in (
-            "许杏玖追完《Re:从零开始的异世界生活》第四季",
-            "许杏玖最喜欢《Re:从零开始的异世界生活》第四季的蕾姆",
-            "许杏玖讨厌香菜",
+            "BotName追完《Re:从零开始的异世界生活》第四季",
+            "BotName最喜欢《Re:从零开始的异世界生活》第四季的蕾姆",
+            "BotName讨厌香菜",
         ):
             self.engine.remember(MemoryDraft(content=content, kind=MemoryKind.SEMANTIC, importance=0.8), SCOPE)
         profile = self.engine.build_profile(SCOPE, max_items=3)
@@ -412,8 +412,8 @@ class TestRetrieval(unittest.TestCase):
         """画像是「这个人是谁」——偏好和关系排在泛泛的事实前面。"""
 
         self.engine.remember(MemoryDraft(content="某件泛泛的事实记录", kind=MemoryKind.SEMANTIC, importance=0.8), SCOPE)
-        self.engine.remember(MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8), SCOPE)
-        self.engine.remember(MemoryDraft(content="季怡称呼许杏玖为宝宝", kind=MemoryKind.RELATION, importance=0.8), SCOPE)
+        self.engine.remember(MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8), SCOPE)
+        self.engine.remember(MemoryDraft(content="Alice称呼BotName为宝宝", kind=MemoryKind.RELATION, importance=0.8), SCOPE)
         profile = self.engine.build_profile(SCOPE, max_items=2)
         lines = profile.splitlines()
         self.assertEqual(len(lines), 2)
@@ -423,7 +423,7 @@ class TestRetrieval(unittest.TestCase):
         """不相关的东西不该进 prompt——这是「总提旧事」的根源。"""
 
         self.engine.remember(
-            MemoryDraft(content="蓝桥杯报名截止到12月18号", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
+            MemoryDraft(content="ProgrammingContest报名截止到12月18号", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
         )
         # require_match=True：模拟「有向量能力」时的严格模式
         context = self.engine.build_context("她喜欢吃什么", SCOPE, require_match=True)
@@ -433,7 +433,7 @@ class TestRetrieval(unittest.TestCase):
         """「那部番叫什么」这种指代，词面一个都搭不上，答案却是刚刚聊过的那条。"""
 
         self.engine.remember(
-            MemoryDraft(content="季怡追完《Re:从零开始的异世界生活》第四季", importance=0.8),
+            MemoryDraft(content="Alice追完《Re:从零开始的异世界生活》第四季", importance=0.8),
             SCOPE,
         )
         context = self.engine.build_context("那部番叫什么", SCOPE)
@@ -454,7 +454,7 @@ class TestRetrieval(unittest.TestCase):
         """普通问句不是指代——「她喜欢吃什么」里全是常用字，不能当成指代。"""
 
         self.engine.remember(
-            MemoryDraft(content="蓝桥杯报名截止到12月18号", importance=0.9), SCOPE
+            MemoryDraft(content="ProgrammingContest报名截止到12月18号", importance=0.9), SCOPE
         )
         context = self.engine.build_context("她喜欢吃什么", SCOPE)
         self.assertEqual(context.text, "", "普通问句不该触发兜底")
@@ -463,10 +463,10 @@ class TestRetrieval(unittest.TestCase):
         """没有向量能力时不要求词面命中——近义记忆会被误杀。"""
 
         self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
         )
         context = self.engine.build_context("今天吃什么呢", SCOPE, require_match=False)
-        self.assertIn("许杏玖喜欢吃辣的东西", context.text)
+        self.assertIn("BotName喜欢吃辣的东西", context.text)
 
     def test_relevance_floor_applies_before_top_k(self):
         """相关性底线要在 top_k 截断**之前**生效。
@@ -477,7 +477,7 @@ class TestRetrieval(unittest.TestCase):
 
         self.engine.config.retrieval.top_k = 2
         self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
         )
         # 造几条「最近写入但完全不相关」的高重要性记忆
         for i in range(6):
@@ -498,18 +498,18 @@ class TestRetrieval(unittest.TestCase):
 
     def test_matched_memory_is_injected(self):
         self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
         )
         context = self.engine.build_context("她喜欢吃什么", SCOPE)
-        self.assertIn("许杏玖喜欢吃辣的东西", context.text)
+        self.assertIn("BotName喜欢吃辣的东西", context.text)
 
     def test_explain_breaks_down_score(self):
         """要能说清「为什么想起这条」。"""
 
         self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9), SCOPE
         )
-        rows = self.engine.explain("许杏玖喜欢吃什么", SCOPE)
+        rows = self.engine.explain("BotName喜欢吃什么", SCOPE)
         self.assertTrue(rows)
         top = rows[0]
         self.assertIn("relevance", top["parts"])

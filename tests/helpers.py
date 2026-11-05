@@ -19,6 +19,7 @@ from memfade.engine import MemoryEngine
 # 所以这里统一登记，进程退出时一次性清掉：
 # 就算测试中途炸了、断言失败了，atexit 也会兜底。
 _TEMP_DIRS: list[str] = []
+_TEMP_FILES: list[str] = []
 
 
 def temp_dir(prefix: str = "memfade-test-") -> str:
@@ -32,6 +33,17 @@ def temp_dir(prefix: str = "memfade-test-") -> str:
     return path
 
 
+def temp_file(suffix: str = "", prefix: str = "memfade-test-") -> str:
+    """建一个临时文件，进程退出时自动删。
+
+    替代裸的 `tempfile.mkstemp()`——后者在测试里留下的垃圾没人管。
+    """
+    handle, path = tempfile.mkstemp(suffix=suffix, prefix=prefix)
+    os.close(handle)
+    _TEMP_FILES.append(path)
+    return path
+
+
 @atexit.register
 def _cleanup_temp_dirs() -> None:
     """进程退出时清掉所有登记过的临时目录。"""
@@ -40,12 +52,27 @@ def _cleanup_temp_dirs() -> None:
         shutil.rmtree(_TEMP_DIRS.pop(), ignore_errors=True)
 
 
+@atexit.register
+def _cleanup_temp_files() -> None:
+    """进程退出时清掉所有登记过的临时文件。"""
+
+    while _TEMP_FILES:
+        path = _TEMP_FILES.pop()
+        try:
+            if os.path.exists(path):
+                os.unlink(path)
+        except Exception:
+            pass
+
+
 def temp_engine(**config_overrides) -> tuple:
     """建一个落在临时目录里的引擎，返回 (engine, 路径, config)。"""
 
     handle, path = tempfile.mkstemp(suffix=".db")
     os.close(handle)
-    os.remove(path)
+    _TEMP_FILES.append(path)
+    if os.path.exists(path):
+        os.remove(path)
     config = MemFadeConfig.from_dict(config_overrides or None)
     config.storage.db_path = path
     engine = MemoryEngine(config)

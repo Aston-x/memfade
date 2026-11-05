@@ -25,7 +25,7 @@ class Config(BaseModel):
         default_factory=list,
         description="只记这些主语的事（留空=不限制）",
     )
-    memfade_subject_hint: str = Field(default="", description="抽取提示词里的人物提示，形如「（小许 / 季怡）」")
+    memfade_subject_hint: str = Field(default="", description="抽取提示词里的人物提示，形如「（小许 / Alice）」")
 
 
 try:

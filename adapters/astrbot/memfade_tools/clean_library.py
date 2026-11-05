@@ -7,11 +7,11 @@
 1. **机器人自己的事**——主语是机器人自己（它看过什么番、收藏了什么）。
     记忆库是「关于对方」的，记自己的事没有意义，还会让机器人
     认领主人的记忆（真事：主人引用机器人一句「你昨晚一口气刷完Re」，
-    库里就多了一条「许杏玖昨晚一口气刷完了Re」）。
-2. **公共知识与资料碎片**——《牧神记5》哪天更新、第18届蓝桥杯的赛制。
+    库里就多了一条「BotName昨晚一口气刷完了Re」）。
+2. **公共知识与资料碎片**——《牧神记5》哪天更新、第18届ProgrammingContest的赛制。
     这些是知识，不是「关于某个人」的记忆。
-3. **同一件事的好几种说法**——「季怡已经购买《影之刃零》」被记了八遍。
-4. **被否认或收回的事**——主人明说过「我没跟你说过我要报名蓝桥杯」。
+3. **同一件事的好几种说法**——「Alice已经购买《影之刃零》」被记了八遍。
+4. **被否认或收回的事**——主人明说过「我没跟你说过我要报名ProgrammingContest」。
 
 ## 怎么用
 
@@ -48,10 +48,10 @@ from memfade.extract import PERSON_ROLES  # noqa: E402
 from memfade.textutil import fts_text, similarity  # noqa: E402
 
 
-DEFAULT_SELF_NAMES = ("许杏玖",)
-DEFAULT_FOCUS = ("季怡",)
+DEFAULT_SELF_NAMES = ("BotName",)
+DEFAULT_FOCUS = ("Alice",)
 DEFAULT_PARTICIPANTS = (
-    "季怡",
+    "Alice",
     "鸡柳",
     "洞",
     "雨",
@@ -146,7 +146,7 @@ def plan(
 
     # 同一件事的另一种重复形态：主语一样、宾语也几乎一样，
     # 但措辞差得远（文本 Dice 抓不住）。
-    # 「季怡已经购买《影之刃零》」「截至昨天，季怡已可游玩《影之刃零》」
+    # 「Alice已经购买《影之刃零》」「截至昨天，Alice已可游玩《影之刃零》」
     # 就是这一类——八条里靠它能并掉六条。
     alive = [item for item in out if item["action"] == "keep"]
     for index, item in enumerate(alive):
@@ -262,7 +262,7 @@ def _ids(text: str) -> List[int]:
 
 
 def _rewrite_map(text: str) -> Dict[int, str]:
-    """解析 ``--rewrite 5=季怡的token plan当前用量大概达到一亿``。"""
+    """解析 ``--rewrite 5=Alice的token plan当前用量大概达到一亿``。"""
 
     out: Dict[int, str] = {}
     for chunk in str(text or "").split("||"):
@@ -278,7 +278,7 @@ def _rewrite_map(text: str) -> Dict[int, str]:
 
 
 def _triple_map(text: str) -> Dict[int, Dict[str, str]]:
-    """解析 ``--triple 5=季怡|用量|大概达到一亿``。"""
+    """解析 ``--triple 5=Alice|用量|大概达到一亿``。"""
 
     out: Dict[int, Dict[str, str]] = {}
     for chunk in str(text or "").split("||"):
@@ -331,7 +331,7 @@ def main() -> int:
     parser.add_argument(
         "--rewrite",
         default="",
-        help="改写内容：id=新内容，多条用 || 分隔（例：5=季怡的token plan用量大概达到一亿）",
+        help="改写内容：id=新内容，多条用 || 分隔（例：5=Alice的token plan用量大概达到一亿）",
     )
     parser.add_argument(
         "--triple",

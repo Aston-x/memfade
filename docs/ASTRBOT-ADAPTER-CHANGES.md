@@ -44,8 +44,8 @@
 作用域键设计与路由规则。
 
 ```
-群级公共   astrbot:group:1127155154
-人级私密 astrbot:group_user:1127155154#u9987
+群级公共   astrbot:group:3000000003
+人级私密 astrbot:group_user:3000000003#u9987
 私聊       astrbot:private:u9987
 ```
 
@@ -245,13 +245,13 @@ Plugin astrbot_plugin_memfade (0.4.0) by memfade: 会记得，也会忘得恰到
 对话实测：
 
 ```
-记住 我叫季怡，我住在杭州
-→ 记住了：我叫季怡，我住在杭州
+记住 我叫Alice，我住在杭州
+→ 记住了：我叫Alice，我住在杭州
 
 记忆 状态
 → 私聊层：记住了 2 条（活跃 2 / 淡出 0 / 摘要 0 / 归档 0）
-  · 我叫季怡，我住在杭州
-  · 我叫季怡
+  · 我叫Alice，我住在杭州
+  · 我叫Alice
   抽取引擎：LLM（成功 0 / 降级 0 / 报错 0）
   向量检索：未启用（宿主没配 embedding provider）
 ```

@@ -130,7 +130,7 @@
     "default": []
   },
   "subject_hint": {
-    "description": "抽取提示词里的人物提示，形如「（季怡 / 阿明）」",
+    "description": "抽取提示词里的人物提示，形如「（Alice / Bob）」",
     "type": "string",
     "default": ""
   },

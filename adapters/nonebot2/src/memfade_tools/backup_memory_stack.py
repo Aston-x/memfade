@@ -18,7 +18,7 @@ memfade（自建）、A_Memorix（宿主自带的记忆核心）、
 ## 用法
 
     python scripts/backup_memory_stack.py \
-        --host-root "G:/AI/许杏玖-MaiBot/MaiBot" \
+        --host-root "G:/AI/BotName-MaiBot/MaiBot" \
         --out "B:/AI/Backup/记忆清空前-20261102-220000"
 """
 

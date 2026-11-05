@@ -26,7 +26,7 @@ class TestPolarityConflict(unittest.TestCase):
 
         for a, b in (
             ("喜欢吃辣", "现在不吃辣"),
-            ("许杏玖喜欢吃辣的食物", "许杏玖现在不吃辣的食物"),
+            ("BotName喜欢吃辣的食物", "BotName现在不吃辣的食物"),
             ("喜欢吃辣的食物", "现在不吃辣的食物了"),
         ):
             self.assertTrue(_polarity_conflict(a, b), "%s vs %s 该判矛盾" % (a, b))
@@ -84,7 +84,7 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
 
     async def test_gist_is_generated(self):
         draft = MemoryDraft(
-            content="上周三和许杏玖一起去吃了炸鸡还喝了奶茶",
+            content="上周三和BotName一起去吃了炸鸡还喝了奶茶",
             kind=MemoryKind.EPISODIC,
             importance=0.4,
         )
@@ -132,10 +132,10 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
     async def test_supersede_conflicting_facts(self):
         old = self.engine.remember(
             MemoryDraft(
-                content="许杏玖住在北京",
+                content="BotName住在北京",
                 kind=MemoryKind.SEMANTIC,
                 importance=0.85,
-                subject="许杏玖",
+                subject="BotName",
                 predicate="住在",
                 object="北京",
             ),
@@ -143,10 +143,10 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
         )
         new = self.engine.remember(
             MemoryDraft(
-                content="许杏玖住在上海",
+                content="BotName住在上海",
                 kind=MemoryKind.SEMANTIC,
                 importance=0.85,
-                subject="许杏玖",
+                subject="BotName",
                 predicate="住在",
                 object="上海",
             ),
@@ -225,10 +225,10 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
         """模型没填 subject/predicate 时，也要能发现「同一件事的两个版本」。"""
 
         old = self.engine.remember(
-            MemoryDraft(content="许杏玖住在杭州", kind=MemoryKind.SEMANTIC, importance=0.85), SCOPE
+            MemoryDraft(content="BotName住在杭州", kind=MemoryKind.SEMANTIC, importance=0.85), SCOPE
         )
         new = self.engine.remember(
-            MemoryDraft(content="许杏玖住在上海", kind=MemoryKind.SEMANTIC, importance=0.85), SCOPE
+            MemoryDraft(content="BotName住在上海", kind=MemoryKind.SEMANTIC, importance=0.85), SCOPE
         )
         self.assertIsNotNone(old)
         self.assertIsNotNone(new)
@@ -237,10 +237,10 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
 
     async def test_different_topics_are_not_conflicts(self):
         a = self.engine.remember(
-            MemoryDraft(content="季怡在做小红书账号", kind=MemoryKind.SEMANTIC, importance=0.8), SCOPE
+            MemoryDraft(content="Alice在做小红书账号", kind=MemoryKind.SEMANTIC, importance=0.8), SCOPE
         )
         b = self.engine.remember(
-            MemoryDraft(content="季怡在备赛蓝桥杯", kind=MemoryKind.SEMANTIC, importance=0.8), SCOPE
+            MemoryDraft(content="Alice在备赛ProgrammingContest", kind=MemoryKind.SEMANTIC, importance=0.8), SCOPE
         )
         self.assertIsNotNone(a)
         self.assertIsNotNone(b)
@@ -255,11 +255,11 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
         """
 
         old = self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8),
+            MemoryDraft(content="BotName喜欢吃辣的食物", kind=MemoryKind.PREFERENCE, importance=0.8),
             SCOPE,
         )
         new = self.engine.remember(
-            MemoryDraft(content="许杏玖现在不吃辣的食物了", kind=MemoryKind.PREFERENCE, importance=0.8),
+            MemoryDraft(content="BotName现在不吃辣的食物了", kind=MemoryKind.PREFERENCE, importance=0.8),
             SCOPE,
         )
         self.assertIsNotNone(old)
@@ -289,10 +289,10 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
         """「不喜欢辣」与「喜欢麻辣烫」并不矛盾，别误判。"""
 
         a = self.engine.remember(
-            MemoryDraft(content="许杏玖不喜欢辣", kind=MemoryKind.PREFERENCE, importance=0.8), SCOPE
+            MemoryDraft(content="BotName不喜欢辣", kind=MemoryKind.PREFERENCE, importance=0.8), SCOPE
         )
         b = self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢麻辣烫", kind=MemoryKind.PREFERENCE, importance=0.8), SCOPE
+            MemoryDraft(content="BotName喜欢麻辣烫", kind=MemoryKind.PREFERENCE, importance=0.8), SCOPE
         )
         self.assertIsNotNone(a)
         self.assertIsNotNone(b)
@@ -307,7 +307,7 @@ class TestConsolidation(unittest.IsolatedAsyncioTestCase):
         """
 
         mem = self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢辣的东西", kind=MemoryKind.SEMANTIC, importance=0.65), SCOPE
+            MemoryDraft(content="BotName喜欢辣的东西", kind=MemoryKind.SEMANTIC, importance=0.65), SCOPE
         )
         self.assertIsNotNone(mem)
         old = time.time() - 200 * 86400.0

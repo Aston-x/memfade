@@ -1,6 +1,6 @@
 """在真实聊天数据上跑 memfade，量化三个关键行为。
 
-这是「实验对象 = 许杏玖」的验证脚本。直接读 MaiBot 的消息库，
+这是「实验对象 = BotName」的验证脚本。直接读 MaiBot 的消息库，
 用真实说过的话跑一遍 memfade，看三件事：
 
 1. **去重**：同样一件事换个说法存了几条？去重之后省了多少？
@@ -9,7 +9,7 @@
 
 用法：
 
-    python scripts/bench_real_data.py --db "G:/AI/许杏玖-MaiBot/MaiBot/data/MaiBot.db"
+    python scripts/bench_real_data.py --db "G:/AI/BotName-MaiBot/MaiBot/data/MaiBot.db"
 
 不需要 LLM：抽取走规则兜底，向量检索关闭，纯 BM25。
 """

@@ -30,7 +30,7 @@ except Exception:  # pragma: no cover
 class FakeEvent:
     """够用的假事件。"""
 
-    def __init__(self, session_id: str = "group:1127155154", group_id: str = "1127155154", user_id: str = "u1"):
+    def __init__(self, session_id: str = "group:3000000003", group_id: str = "3000000003", user_id: str = "u1"):
         self._session_id = session_id
         self._group_id = group_id
         self._user_id = user_id
@@ -80,7 +80,7 @@ class TestNoneBotAdapter(unittest.IsolatedAsyncioTestCase):
     def test_scope_uses_session_id(self):
         scope = self.core.scope_of(FakeEvent())
         self.assertEqual(scope.chat_type, "group")
-        self.assertEqual(scope.chat_id, "group:1127155154")
+        self.assertEqual(scope.chat_id, "group:3000000003")
 
     def test_scope_private(self):
         scope = self.core.scope_of(FakeEvent(session_id="u1", group_id="", user_id="u1"))
@@ -92,12 +92,12 @@ class TestNoneBotAdapter(unittest.IsolatedAsyncioTestCase):
 
         scope = self.core.scope_of(FakeEvent())
         memory = self.core.engine.remember(
-            MemoryDraft(content="许杏玖喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9),
+            MemoryDraft(content="BotName喜欢吃辣的东西", kind=MemoryKind.SEMANTIC, importance=0.9),
             scope,
         )
         self.assertIsNotNone(memory)
         text = await self.core.build_context(FakeEvent(), "今天吃什么")
-        self.assertIn("许杏玖喜欢吃辣的东西", text)
+        self.assertIn("BotName喜欢吃辣的东西", text)
 
     async def test_public_api_is_importable(self):
         import nonebot_plugin_memfade as plugin

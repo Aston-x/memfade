@@ -60,7 +60,7 @@ class MemoryStatus(str, Enum):
 
 
 # 会话隔离键的构造规则：platform:chat_type:chat_id
-# 例：qq:group:1127155154 / qq:private:1738157278
+# 例：qq:group:3000000003 / qq:private:1000000001
 
 
 @dataclass(frozen=True)

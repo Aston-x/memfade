@@ -10,8 +10,8 @@
     from memfade import MemoryEngine, Scope, MemoryDraft
 
     engine = MemoryEngine(db_path="memfade.db")
-    scope = Scope(platform="qq", chat_type="private", chat_id="1738157278")
-    engine.remember(MemoryDraft(content="许杏玖喜欢辣的食物", kind="semantic",
+    scope = Scope(platform="qq", chat_type="private", chat_id="1000000001")
+    engine.remember(MemoryDraft(content="BotName喜欢辣的食物", kind="semantic",
                                  importance=0.8), scope)
     ctx = engine.build_context("今天吃什么", scope)
     print(ctx.text)

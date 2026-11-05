@@ -14,8 +14,8 @@
 用法（要在 MaiBot 自己的 venv 下跑，需要能 import src.*）：
 
     python scripts/backfill_embeddings.py \
-        --db "G:/AI/许杏玖-MaiBot/MaiBot/data/plugins/memfade.memory/memfade.db" \
-        --host-root "G:/AI/许杏玖-MaiBot/MaiBot"
+        --db "G:/AI/BotName-MaiBot/MaiBot/data/plugins/memfade.memory/memfade.db" \
+        --host-root "G:/AI/BotName-MaiBot/MaiBot"
 """
 
 from __future__ import annotations

@@ -51,12 +51,12 @@ REFLECT_SYSTEM_PROMPT = (
     "5. 如果归纳不出有意义的结论，返回空数组 []。\n"
     "\n"
     "示例输入：\n"
-    "- #1: 季怡喜欢辣的食物\n"
-    "- #2: 季怡不吃肥肠\n"
-    "- #3: 季怡爱喝可乐\n"
+    "- #1: Alice喜欢辣的食物\n"
+    "- #2: Alice不吃肥肠\n"
+    "- #3: Alice爱喝可乐\n"
     "\n"
     "示例输出：\n"
-    '[{"content": "季怡有明确的饮食偏好：喜欢辣食和可乐，不吃肥肠", "source_ids": [1, 2, 3], "importance": 0.8}]\n'
+    '[{"content": "Alice有明确的饮食偏好：喜欢辣食和可乐，不吃肥肠", "source_ids": [1, 2, 3], "importance": 0.8}]\n'
 )
 
 
@@ -86,6 +86,28 @@ class ConsolidationReport:
             "reflected": self.reflected,
             "errors": list(self.errors),
         }
+
+    def summary_line(self) -> str:
+        """一行自证摘要——说不出来的数等于没做。
+
+        来源：图片方案要求 nightly 结束必须打印一行摘要，
+        报各层条数、合并/取代/归纳数和错误数。这里把
+        ConsolidationReport 的数字压缩成一行可机读可人读。
+        """
+
+        parts = [
+            f"扫描={self.scanned}",
+            f"淡化={self.decayed}",
+            f"变档={self.status_changed}",
+            f"残影={self.gisted}",
+            f"合并={self.merged}",
+            f"取代={self.superseded}",
+            f"归纳={self.reflected}",
+            f"清理={self.purged}",
+        ]
+        if self.errors:
+            parts.append(f"错误={len(self.errors)}")
+        return " | ".join(parts)
 
 
 class ConsolidationService:
@@ -142,7 +164,7 @@ class ConsolidationService:
 
     def _load(self, scope_key: Optional[str], limit: int) -> list[Memory]:
         if scope_key:
-            return self.store.iter_scope(scope_key, statuses=("active", "fading", "gisted"), limit=limit)
+            return self.store.iter_owned_scope(scope_key, statuses=("active", "fading", "gisted"), limit=limit)
         return self.store.iter_maintenance(limit=limit)
 
     async def _decay_pass(
@@ -217,19 +239,31 @@ class ConsolidationService:
         """合并一个作用域内的近似重复。"""
 
         merged = 0
-        candidates = self.store.iter_scope(
+        candidates = self.store.iter_owned_scope(
             scope_key, statuses=("active", "fading", "gisted"), limit=2000
         )
-        for a, b in find_duplicates(candidates, threshold=self.config.retrieval.merge_threshold):
-            survivor = choose_survivor(a, b)
-            loser = b if survivor is a else a
-            combined = merge_memories(survivor, loser)
+        pairs = find_duplicates(candidates, threshold=self.config.retrieval.merge_threshold)
+        for group_ids in _connected_groups(pairs):
+            group_map = {m.id: m for m in candidates if m.id in group_ids}
+            if len(group_map) < 2:
+                continue
+            group = list(group_map.values())
+            survivor = group[0]
+            for m in group[1:]:
+                if choose_survivor(survivor, m) is m:
+                    survivor = m
+            losers = [m for m in group if m.id != survivor.id]
             try:
+                combined = survivor
+                for loser in losers:
+                    combined = merge_memories(combined, loser)
                 self.store.update(combined, fts_text(combined.content))
-                self.store.delete(loser.id)
-                merged += 1
+                for loser in losers:
+                    self.store.delete(loser.id)
+                    merged += 1
             except Exception as exc:
-                report.errors.append(f"合并 #{a.id}/#{b.id} 失败: {exc}")
+                ids_str = "/".join(f"#{m.id}" for m in group)
+                report.errors.append(f"合并 {ids_str} 失败: {exc}")
         return merged
 
     def _supersede_pass(self, scope_key: Optional[str]) -> int:
@@ -280,7 +314,7 @@ class ConsolidationService:
         cap = int(self.config.maintenance.max_memories_per_scope)
         if cap <= 0:
             return 0
-        memories = self.store.iter_scope(scope_key, limit=cap * 4 + 1000)
+        memories = self.store.iter_owned_scope(scope_key, limit=cap * 4 + 1000)
         if len(memories) <= cap:
             return 0
         status_rank = {
@@ -330,17 +364,16 @@ class ConsolidationService:
         """对一个作用域做归纳。"""
 
         # 只归纳 active 的记忆：fading/gisted 已经在退场，不值得归纳
-        memories = self.store.iter_scope(
-            scope_key, statuses=("active",), limit=self.config.maintenance.reflect_max_sources * 2
+        # SQL 层按 updated_at DESC 分页，避免 Python 侧截断漏掉更新记录
+        memories = self.store.iter_owned_scope(
+            scope_key,
+            statuses=("active",),
+            kinds=[k.value for k in MemoryKind if k != MemoryKind.OBSERVATION],
+            limit=self.config.maintenance.reflect_max_sources,
+            order_by="updated_at DESC",
         )
-        # 排除已有的 observation，避免重复归纳
-        memories = [m for m in memories if m.kind != MemoryKind.OBSERVATION]
         if len(memories) < self.config.maintenance.reflect_min_active:
             return 0
-
-        # 取前 N 条（按 updated_at 降序，优先归纳新记忆）
-        memories.sort(key=lambda m: m.updated_at, reverse=True)
-        memories = memories[: self.config.maintenance.reflect_max_sources]
         if len(memories) < self.config.maintenance.reflect_min_sources:
             return 0
 
@@ -407,4 +440,38 @@ class ConsolidationService:
             reflected += 1
 
         return reflected
+
+
+def _connected_groups(pairs: list[tuple]) -> list[set[int]]:
+    """把 (Memory, Memory) 对按连通分量分组。
+
+    旧的去重是「找到一对就合并一对」，三条以上互相近似时会出现
+    A-B、B-C 两对分别处理，survivor 对象在中间被替换导致后续
+    合并读到过时数据。改成先构图分组，再在每组里一次选 survivor
+    并把所有其余条目并进它。
+    """
+
+    parent: dict[int, int] = {}
+
+    def find(x: int) -> int:
+        while parent.get(x, x) != x:
+            parent[x] = parent.get(parent[x], parent[x])
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for a, b in pairs:
+        union(a.id, b.id)
+
+    groups: dict[int, set[int]] = {}
+    for a, b in pairs:
+        root = find(a.id)
+        groups.setdefault(root, set()).add(a.id)
+        groups[root].add(b.id)
+    return list(groups.values())
+
 

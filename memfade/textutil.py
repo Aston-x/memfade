@@ -215,7 +215,7 @@ def best_clause(text: str, limit: int = 40) -> str:
     而**第一句通常就是那件事**（后面的是补充、后续、别的事）。
 
     早先试过「挑最有信息量的一句」（按内容词数量打分），结果更糟：
-    「后来他跟朋友去吃了炸鸡，许杏玖很开心，然后又去买了点东西…」
+    「后来他跟朋友去吃了炸鸡，BotName很开心，然后又去买了点东西…」
     会挑到最后那句——正好把「发生了什么」挑没了。
     第一句简单、可预测、留着话题。
 
@@ -578,7 +578,7 @@ def longest_common_substring(a: str, b: str) -> str:
     """两个字符串的最长公共子串（字符级）。
 
     用来判断「对方是不是明确提到了这件事」：
-    「还记得炸鸡吗」和「许杏玖喜欢吃炸鸡」的公共子串是「炸鸡」（2 字），
+    「还记得炸鸡吗」和「BotName喜欢吃炸鸡」的公共子串是「炸鸡」（2 字），
     而「今天吃了吗」和「昨天吃了炸鸡」只有「吃了」——同样 2 字，
     但前者的语义指向明确得多，所以阈值定在 2 字而不是更长。
     """
@@ -603,4 +603,59 @@ def longest_common_substring(a: str, b: str) -> str:
                     best_end = i
         previous = current
     return s2[best_end - best : best_end]
+
+
+# ------------------------------------------------------------------ #
+# 字节与压缩（来源：图片方案）
+# ------------------------------------------------------------------ #
+
+
+def utf8_bytes(text: str) -> int:
+    """UTF-8 编码后的字节数。
+
+    来源：图片方案要求 L1 预算 4096 UTF-8 字节，
+    不能用字符数或 ``len(text) * 3`` 估算。
+    """
+
+    return len(text.encode("utf-8"))
+
+
+def compress_text(text: str, level: int = 0) -> str:
+    """四级压缩——保留证据，减少展示长度。
+
+    来源：图片方案的压缩四级（原句→取一半→取第一句→去修饰取前20字）。
+    压缩只减少展示长度，不篡改原文。原始证据和 content_hash 仍保留在
+    记忆记录里，压缩后的摘要另存 summary 字段。
+
+    level 0: 完整原文（不压缩）
+    level 1: 删除冗余修饰词，保留全部核心事实
+    level 2: 保留第一句完整的句子
+    level 3: 去修饰取前 20 个字符
+    """
+
+    if not text or level <= 0:
+        return text
+
+    if level == 1:
+        # 删除常见修饰词和冗余表达
+        import re
+
+        result = re.sub(r"(其实|实际上|说实话|坦白说|简单来说|总的来说)", "", text)
+        result = re.sub(r"(，|,)\s*(而且|并且|同时|另外|此外)[^。]*", "", result)
+        return result.strip() if result.strip() else text
+
+    if level == 2:
+        # 保留第一句完整的句子
+        sentences = split_sentences(text)
+        if sentences:
+            return sentences[0]
+        return text[:len(text) // 2]
+
+    if level >= 3:
+        # 去修饰取前 20 个字符
+        if len(text) <= 20:
+            return text
+        return text[:20] + "…"
+
+    return text
 

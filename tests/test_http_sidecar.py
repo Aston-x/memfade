@@ -83,12 +83,12 @@ class TestHTTPSidecar(unittest.TestCase):
         scope = {"platform": "qq", "chat_type": "private", "chat_id": "u1"}
         result = self._post(
             "/remember",
-            {"scope": scope, "content": "许杏玖喜欢吃辣的食物", "kind": "semantic", "importance": 0.9},
+            {"scope": scope, "content": "BotName喜欢吃辣的食物", "kind": "semantic", "importance": 0.9},
         )
         self.assertTrue(result["ok"])
         self.assertEqual(result["written"], 1)
         ctx = self._post("/context", {"scope": scope, "query": "今天吃什么"})
-        self.assertIn("许杏玖喜欢吃辣的食物", ctx["text"])
+        self.assertIn("BotName喜欢吃辣的食物", ctx["text"])
         self.assertEqual(len(ctx["facts"]), 1)
 
     def test_scope_isolation_over_http(self):
@@ -117,7 +117,7 @@ class TestHTTPSidecar(unittest.TestCase):
 
         scope = {"platform": "qq", "chat_type": "private", "chat_id": "u1"}
         long_text = (
-            "季怡在做小红书账号，发AI绘画内容，目标是靠流量和接单赚钱，"
+            "Alice在做小红书账号，发AI绘画内容，目标是靠流量和接单赚钱，"
             "10月起零关注零粉丝，只有几个赞，曾被卖家临时加价拉黑二十块"
         )
         result = self._post(
@@ -132,7 +132,7 @@ class TestHTTPSidecar(unittest.TestCase):
         """显式检索必须真的命中。"""
 
         scope = {"platform": "qq", "chat_type": "private", "chat_id": "u1"}
-        self._post("/remember", {"scope": scope, "content": "许杏玖喜欢辣的食物", "importance": 0.9})
+        self._post("/remember", {"scope": scope, "content": "BotName喜欢辣的食物", "importance": 0.9})
         result = self._post("/recall", {"scope": scope, "query": "完全不相关的东西xyz", "top_k": 8})
         self.assertEqual(len(result["hits"]), 0)
         result = self._post("/recall", {"scope": scope, "query": "辣", "top_k": 8})
@@ -143,7 +143,7 @@ class TestHTTPSidecar(unittest.TestCase):
 
         scope = {"platform": "qq", "chat_type": "private", "chat_id": "u1"}
         written = self._post(
-            "/remember", {"scope": scope, "content": "许杏玖喜欢辣的食物", "importance": 0.9}
+            "/remember", {"scope": scope, "content": "BotName喜欢辣的食物", "importance": 0.9}
         )
         self.assertTrue(written["ok"])
         mid = written["ids"][0]

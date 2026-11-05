@@ -35,9 +35,9 @@ SCOPES = [
     Scope(platform="qq", chat_type="private", chat_id="d"),
 ]
 WORDS = [
-    "许杏玖喜欢辣的食物",
-    "季怡在写一个插件",
-    "蓝桥杯报名12月18日截止",
+    "BotName喜欢辣的食物",
+    "Alice在写一个插件",
+    "ProgrammingContest报名12月18日截止",
     "猫粮买错了牌子",
     "今天中午一起吃了炸鸡",
     "显卡不能同时跑两个模型",
@@ -75,7 +75,7 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
                 content=content,
                 kind=kind,
                 importance=round(self.rng.uniform(0.1, 1.0), 3),
-                subject=self.rng.choice(["许杏玖", "季怡", ""]),
+                subject=self.rng.choice(["BotName", "Alice", ""]),
                 predicate=self.rng.choice(["喜欢", "住在", ""]),
                 object=self.rng.choice(["辣的食物", "上海", ""]),
                 cross_scope=self.rng.random() < 0.1,
@@ -152,10 +152,10 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
         scope = SCOPES[0]
         self.engine.remember(
             MemoryDraft(
-                content="许杏玖住在上海",
+                content="BotName住在上海",
                 kind=MemoryKind.SEMANTIC,
                 importance=0.9,
-                subject="许杏玖",
+                subject="BotName",
                 predicate="住在",
                 object="上海",
             ),
@@ -163,20 +163,20 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
         )
         self.engine.remember(
             MemoryDraft(
-                content="许杏玖住在杭州",
+                content="BotName住在杭州",
                 kind=MemoryKind.SEMANTIC,
                 importance=0.9,
-                subject="许杏玖",
+                subject="BotName",
                 predicate="住在",
                 object="杭州",
             ),
             scope,
         )
         await self.engine.consolidate()
-        hits = self.engine.recall("许杏玖住在", scope, top_k=10)
+        hits = self.engine.recall("BotName住在", scope, top_k=10)
         contents = [hit.memory.content for hit in hits]
-        self.assertIn("许杏玖住在杭州", contents, "新事实应该还在")
-        self.assertNotIn("许杏玖住在上海", contents, "旧事实应该已被取代")
+        self.assertIn("BotName住在杭州", contents, "新事实应该还在")
+        self.assertNotIn("BotName住在上海", contents, "旧事实应该已被取代")
 
     def test_decay_is_monotonic_in_time(self):
         """时间越久，有效强度越低（不可能越放越强）。"""
@@ -203,7 +203,7 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
         """写进去的稳定事实，应该还能被搜到（除非被淡出或去重）。"""
 
         scope = SCOPES[0]
-        unique = "许杏玖喜欢麻辣火锅和烤鸭"
+        unique = "BotName喜欢麻辣火锅和烤鸭"
         self.engine.remember(
             MemoryDraft(content=unique, kind=MemoryKind.PREFERENCE, importance=0.9), scope
         )
@@ -238,7 +238,7 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
         scope = SCOPES[0]
         for _ in range(10):
             self.engine.remember(
-                MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9),
+                MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9),
                 scope,
             )
         self.assertEqual(self.engine.store.count(scope.key()), 1)
@@ -246,8 +246,8 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
     async def test_cross_scope_needs_explicit_flag(self):
         """跨会话共享必须显式开启，且别的会话确实能看到。"""
 
-        normal = "许杏玖养了一只叫小咪的猫"
-        shared = "许杏玖的生日是11月3日"
+        normal = "BotName养了一只叫小咪的猫"
+        shared = "BotName的生日是11月3日"
         self.engine.remember(MemoryDraft(content=normal, importance=0.9), SCOPES[0])
         self.engine.remember(
             MemoryDraft(content=shared, importance=0.9, cross_scope=True), SCOPES[0]
@@ -264,7 +264,7 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
         早先它们会跨会话合并，把 A 会话的内容并进 B 会话。
         """
 
-        same = "许杏玖喜欢辣的食物"
+        same = "BotName喜欢辣的食物"
         self.engine.remember(MemoryDraft(content=same, kind=MemoryKind.PREFERENCE, importance=0.9), SCOPES[0])
         self.engine.remember(MemoryDraft(content=same, kind=MemoryKind.PREFERENCE, importance=0.9), SCOPES[1])
         self.assertEqual(self.engine.store.count(SCOPES[0].key()), 1)
@@ -279,10 +279,10 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
         scope = SCOPES[0]
         self.engine.remember(
             MemoryDraft(
-                content="许杏玖住在上海",
+                content="BotName住在上海",
                 kind=MemoryKind.SEMANTIC,
                 importance=0.9,
-                subject="许杏玖",
+                subject="BotName",
                 predicate="住在",
                 object="上海",
             ),
@@ -290,10 +290,10 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
         )
         self.engine.remember(
             MemoryDraft(
-                content="许杏玖住在杭州",
+                content="BotName住在杭州",
                 kind=MemoryKind.SEMANTIC,
                 importance=0.9,
-                subject="许杏玖",
+                subject="BotName",
                 predicate="住在",
                 object="杭州",
             ),
@@ -301,10 +301,10 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
         )
         report = await self.engine.consolidate()
         self.assertGreaterEqual(report.superseded, 1, "不指定作用域时仲裁被跳过了")
-        hits = self.engine.recall("许杏玖住在", scope, top_k=10)
+        hits = self.engine.recall("BotName住在", scope, top_k=10)
         contents = [hit.memory.content for hit in hits]
-        self.assertIn("许杏玖住在杭州", contents)
-        self.assertNotIn("许杏玖住在上海", contents)
+        self.assertIn("BotName住在杭州", contents)
+        self.assertNotIn("BotName住在上海", contents)
 
     async def test_injection_respects_budget_and_limits(self):
         """注入出来的文本永远不超过预算，回声层永远不超过条数上限。"""
@@ -326,13 +326,13 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
 
         scope = SCOPES[0]
         keep = self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9), scope
         )
         gone = self.engine.remember(
-            MemoryDraft(content="许杏玖讨厌香菜", kind=MemoryKind.PREFERENCE, importance=0.9), scope
+            MemoryDraft(content="BotName讨厌香菜", kind=MemoryKind.PREFERENCE, importance=0.9), scope
         )
         self.engine.store.mark_superseded(gone.id, keep.id)
-        ctx = self.engine.build_context("许杏玖", scope, top_k=20)
+        ctx = self.engine.build_context("BotName", scope, top_k=20)
         self.assertNotIn("讨厌香菜", ctx.text)
 
     async def test_pinned_memory_never_fades(self):
@@ -342,7 +342,7 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
 
         scope = SCOPES[0]
         mem = self.engine.remember(
-            MemoryDraft(content="许杏玖最重要的约定", kind=MemoryKind.SEMANTIC, importance=0.9), scope
+            MemoryDraft(content="BotName最重要的约定", kind=MemoryKind.SEMANTIC, importance=0.9), scope
         )
         pinned = Memory(**{**mem.__dict__, "pinned": True})
         self.engine.store.update(pinned)
@@ -366,7 +366,7 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
 
         scope = SCOPES[0]
         mem = self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9), scope
         )
         self.engine.reinforce([mem.id])
         first = self.engine.store.get(mem.id).strength
@@ -383,7 +383,7 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
 
         scope = SCOPES[0]
         mem = self.engine.remember(
-            MemoryDraft(content="许杏玖喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9), scope
+            MemoryDraft(content="BotName喜欢辣的食物", kind=MemoryKind.PREFERENCE, importance=0.9), scope
         )
         mem.importance = 0.95
         self.engine.store.update(mem)  # 故意不传 fts_tokens
@@ -403,7 +403,7 @@ class TestStress(unittest.IsolatedAsyncioTestCase):
         self.engine.remember(
             MemoryDraft(content="电子赛科目单片机、网络安全", importance=0.9), scope
         )
-        self.engine.remember(MemoryDraft(content="许杏玖喜欢辣的食物", importance=0.9), scope)
+        self.engine.remember(MemoryDraft(content="BotName喜欢辣的食物", importance=0.9), scope)
         hits = self.engine.recall("晚安", scope, top_k=5, require_match=True)
         self.assertFalse(
             any("网络安全" in hit.memory.content for hit in hits),

@@ -35,7 +35,7 @@ pip install nonebot-plugin-memfade
 from nonebot_plugin_memfade import build_context, remember, recall_matching, forget, set_pinned
 
 text = await build_context(event)          # 可直接注入 prompt 的记忆文本
-await remember(event, "他叫许杏玖")        # 显式写入一条
+await remember(event, "他叫BotName")        # 显式写入一条
 hits = await recall_matching(event, "辣")  # 检索（必须真命中）
 await set_pinned(event, "辣的食物")        # 置顶
 await forget(event, "辣的食物")            # 忘掉
